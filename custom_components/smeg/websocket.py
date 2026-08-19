@@ -1,64 +1,50 @@
-"""STOMP over SockJS WebSocket client for real-time Smeg device state pushes.
+"""Raw STOMP over WebSocket client for real-time Smeg device state pushes.
 
-Protocol stack:
-  aiohttp WebSocket (TLS transport)
-    └── SockJS framing  (o / h / a[...] / c[...])
-          └── STOMP 1.1  (CONNECT → CONNECTED → SUBSCRIBE → MESSAGE)
+Charles proxy captures confirm the app connects to:
+  wss://ws.prod-platform.smegconnect.com/register/websocket
 
-The SockJS WebSocket URL pattern is:
-  wss://ws.prod-platform.smegconnect.com/register/{server_id}/{session_id}/websocket
-where server_id is a random 3-digit string and session_id is 8 random chars.
-
-Client→server SockJS frames are bare JSON arrays: ["stomp frame string"]
-Server→client SockJS frames are prefixed:
-  o          — session open
-  h          — server heartbeat (no response required)
-  a["..."]   — data array
-  c[code,"reason"] — close
+This is Spring's raw WebSocket STOMP endpoint — NOT the SockJS transport
+path (register/{server}/{session}/websocket). No SockJS framing is used.
+STOMP frames are sent and received as plain WebSocket text messages.
 """
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import random
-import string
 from collections.abc import Callable, Coroutine
 from typing import Any
 
 import aiohttp
 
 from .auth import SmegAuth
-from .const import WS_BASE
 
 _LOGGER = logging.getLogger(__name__)
 
-_HEARTBEAT_INTERVAL = 25
+WS_URL = "wss://ws.prod-platform.smegconnect.com/register/websocket"
 _CONNECT_TIMEOUT = 20
+_HEARTBEAT_INTERVAL = 25
 
 
-def _server_id() -> str:
-    return str(random.randint(0, 999)).zfill(3)
-
-
-def _session_id() -> str:
-    return "".join(random.choices(string.ascii_lowercase + string.digits, k=8))
-
+# ---------------------------------------------------------------------------
+# STOMP frame helpers
+# ---------------------------------------------------------------------------
 
 def _stomp_frame(command: str, headers: dict[str, str], body: str = "") -> str:
+    """Build a STOMP 1.1 frame string."""
     lines = [command]
     for k, v in headers.items():
         lines.append(f"{k}:{v}")
-    lines.append("")
+    lines.append("")           # blank line separates headers from body
     lines.append(body + "\x00")
     return "\n".join(lines)
 
 
 def _parse_stomp(text: str) -> dict[str, Any]:
-    text = text.rstrip("\x00")
+    """Parse a STOMP frame string into {command, headers, body}."""
+    text = text.rstrip("\x00").strip("\n")
     header_part, _, body = text.partition("\n\n")
     lines = header_part.split("\n")
-    command = lines[0]
+    command = lines[0].strip()
     headers: dict[str, str] = {}
     for line in lines[1:]:
         if ":" in line:
@@ -67,28 +53,27 @@ def _parse_stomp(text: str) -> dict[str, Any]:
     return {"command": command, "headers": headers, "body": body}
 
 
-def _extract_sockjs_frames(data: str) -> list[str]:
-    if not data.startswith("a"):
-        return []
-    try:
-        return json.loads(data[1:])
-    except json.JSONDecodeError:
-        _LOGGER.debug("Failed to parse SockJS frame: %s", data[:200])
-        return []
+# ---------------------------------------------------------------------------
+# Callback types
+# ---------------------------------------------------------------------------
+
+DisconnectCallback = Callable[[None], Coroutine[Any, Any, None]]
+MessageCallback = Callable[[dict[str, Any]], Coroutine[Any, Any, None]]
 
 
-StateUpdateCallback = Callable[[dict[str, Any] | None], Coroutine[Any, Any, None]]
-
+# ---------------------------------------------------------------------------
+# Client
+# ---------------------------------------------------------------------------
 
 class SmegWebSocket:
-    """Maintains a persistent STOMP/SockJS WebSocket connection."""
+    """Persistent raw STOMP WebSocket connection to the Smeg cloud."""
 
     def __init__(
         self,
         session: aiohttp.ClientSession,
         auth: SmegAuth,
-        on_disconnect: StateUpdateCallback,
-        on_message: StateUpdateCallback,
+        on_disconnect: DisconnectCallback,
+        on_message: MessageCallback,
     ) -> None:
         self._session = session
         self._auth = auth
@@ -100,24 +85,16 @@ class SmegWebSocket:
         self._heartbeat_task: asyncio.Task | None = None
 
     async def async_connect(self) -> None:
-        """Connect, STOMP handshake, subscribe, start listener. Raises on failure."""
+        """Open WebSocket, perform STOMP handshake, subscribe. Raises on failure."""
         self._running = True
-        url = f"{WS_BASE}/{_server_id()}/{_session_id()}/websocket"
-        _LOGGER.debug("Connecting STOMP WebSocket: %s", url)
-
         token = await self._auth.get_access_token()
 
+        _LOGGER.debug("Connecting raw STOMP WebSocket: %s", WS_URL)
+
         async with asyncio.timeout(_CONNECT_TIMEOUT):
-            self._ws = await self._session.ws_connect(url, heartbeat=None)
+            self._ws = await self._session.ws_connect(WS_URL, heartbeat=None)
 
-            # SockJS open frame
-            msg = await self._ws.receive()
-            if msg.type != aiohttp.WSMsgType.TEXT or msg.data != "o":
-                raise ConnectionError(
-                    f"Expected SockJS 'o' open frame, got: {msg.data!r}"
-                )
-
-            # STOMP CONNECT
+            # Send STOMP CONNECT
             connect = _stomp_frame(
                 "CONNECT",
                 {
@@ -127,26 +104,22 @@ class SmegWebSocket:
                     "x-tenant": "smegcons",
                 },
             )
-            await self._ws.send_str(json.dumps([connect]))
+            await self._ws.send_str(connect)
 
-            # Wait for CONNECTED
-            msg = await self._ws.receive()
-            if msg.type != aiohttp.WSMsgType.TEXT:
-                raise ConnectionError("No response to STOMP CONNECT")
-            frames = _extract_sockjs_frames(msg.data)
-            if not frames:
-                raise ConnectionError("Empty SockJS frame during handshake")
-            parsed = _parse_stomp(frames[0])
-            if parsed["command"] == "ERROR":
+            # Receive CONNECTED (ignore leading heartbeat newlines)
+            connected = await self._recv_stomp_frame()
+            if connected is None:
+                raise ConnectionError("WebSocket closed before CONNECTED frame")
+            if connected["command"] == "ERROR":
                 raise ConnectionError(
-                    f"STOMP CONNECT rejected: {parsed['headers'].get('message', parsed['body'])}"
+                    f"STOMP CONNECT rejected: {connected['headers'].get('message', connected['body'])}"
                 )
-            if parsed["command"] != "CONNECTED":
+            if connected["command"] != "CONNECTED":
                 raise ConnectionError(
-                    f"Expected CONNECTED, got {parsed['command']}"
+                    f"Expected CONNECTED, got {connected['command']!r}"
                 )
 
-            # STOMP SUBSCRIBE
+            # Send STOMP SUBSCRIBE
             sub = _stomp_frame(
                 "SUBSCRIBE",
                 {
@@ -155,21 +128,20 @@ class SmegWebSocket:
                     "ack": "auto",
                 },
             )
-            await self._ws.send_str(json.dumps([sub]))
+            await self._ws.send_str(sub)
 
         self._listen_task = asyncio.ensure_future(self._listen())
         self._heartbeat_task = asyncio.ensure_future(self._heartbeat())
         _LOGGER.info("Smeg STOMP WebSocket connected and subscribed")
 
     async def async_disconnect(self) -> None:
-        """Cleanly close the WebSocket. Does NOT trigger the disconnect callback."""
+        """Close the WebSocket cleanly. Does NOT trigger the disconnect callback."""
         self._running = False
-        if self._heartbeat_task:
-            self._heartbeat_task.cancel()
-            self._heartbeat_task = None
-        if self._listen_task:
-            self._listen_task.cancel()
-            self._listen_task = None
+        for task in (self._heartbeat_task, self._listen_task):
+            if task:
+                task.cancel()
+        self._heartbeat_task = None
+        self._listen_task = None
         if self._ws and not self._ws.closed:
             try:
                 await self._ws.close()
@@ -177,16 +149,30 @@ class SmegWebSocket:
                 pass
         self._ws = None
 
+    # -----------------------------------------------------------------------
+    # Internal helpers
+    # -----------------------------------------------------------------------
+
+    async def _recv_stomp_frame(self) -> dict[str, Any] | None:
+        """Receive the next non-heartbeat WebSocket message and parse as STOMP."""
+        while True:
+            msg = await self._ws.receive()
+            if msg.type == aiohttp.WSMsgType.TEXT:
+                text = msg.data.strip()
+                if not text:        # heartbeat — skip
+                    continue
+                return _parse_stomp(text)
+            if msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                return None
+
     async def _listen(self) -> None:
         try:
-            async for msg in self._ws:
-                if not self._running:
+            while self._running:
+                frame = await self._recv_stomp_frame()
+                if frame is None:
+                    _LOGGER.debug("WebSocket closed during listen")
                     break
-                if msg.type == aiohttp.WSMsgType.TEXT:
-                    await self._handle_frame(msg.data)
-                elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
-                    _LOGGER.debug("WebSocket closed/error msg: %s", msg)
-                    break
+                await self._dispatch(frame)
         except asyncio.CancelledError:
             return
         except Exception:
@@ -196,41 +182,34 @@ class SmegWebSocket:
                 self._running = False
                 await self._on_disconnect(None)
 
-    async def _handle_frame(self, data: str) -> None:
-        if data in ("o", "h"):
-            return
-        if data.startswith("c"):
-            _LOGGER.debug("SockJS close frame: %s", data)
-            return
-        if not data.startswith("a"):
-            return
-
-        for frame_str in _extract_sockjs_frames(data):
-            parsed = _parse_stomp(frame_str)
-            if parsed["command"] == "MESSAGE":
-                try:
-                    payload = json.loads(parsed["body"])
-                    await self._on_message(payload)
-                except json.JSONDecodeError:
-                    _LOGGER.debug("Non-JSON STOMP body: %s", parsed["body"][:100])
-            elif parsed["command"] == "ERROR":
-                msg = parsed["headers"].get("message", "unknown")
-                _LOGGER.warning(
-                    "STOMP ERROR from server: %s — will reconnect", msg
-                )
-                # Treat server ERROR as a disconnect; stop and let coordinator reconnect
-                if self._running:
-                    self._running = False
-                    await self._on_disconnect(None)
-                return
+    async def _dispatch(self, frame: dict[str, Any]) -> None:
+        cmd = frame["command"]
+        if cmd == "MESSAGE":
+            try:
+                import json
+                payload = json.loads(frame["body"])
+                await self._on_message(payload)
+            except Exception:
+                _LOGGER.debug("Could not parse MESSAGE body: %s", frame["body"][:100])
+        elif cmd == "ERROR":
+            msg = frame["headers"].get("message", frame["body"][:100])
+            _LOGGER.warning("STOMP ERROR from server: %s — will reconnect", msg)
+            if self._running:
+                self._running = False
+                await self._on_disconnect(None)
+        elif cmd == "RECEIPT":
+            pass    # not requested, ignore
+        else:
+            _LOGGER.debug("Unhandled STOMP frame: %s", cmd)
 
     async def _heartbeat(self) -> None:
+        """Send periodic STOMP heartbeat newlines to keep the connection alive."""
         try:
             while self._running:
                 await asyncio.sleep(_HEARTBEAT_INTERVAL)
                 if self._ws and not self._ws.closed and self._running:
-                    await self._ws.send_str(json.dumps(["\n"]))
+                    await self._ws.send_str("\n")
         except asyncio.CancelledError:
             pass
         except Exception:
-            _LOGGER.debug("Heartbeat ended", exc_info=True)
+            _LOGGER.debug("Heartbeat task ended", exc_info=True)

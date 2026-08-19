@@ -32,7 +32,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .api import SmegApi, SmegApiError
 from .auth import SmegAuth
-from .const import WS_RECONNECT_MAX_DELAY, WS_RECONNECT_MIN_DELAY
+from .const import WS_RECONNECT_MAX_DELAY
 from .websocket import SmegWebSocket
 
 _LOGGER = logging.getLogger(__name__)
@@ -165,7 +165,7 @@ class SmegCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
     async def _reconnect_loop(self) -> None:
         """Exponential backoff reconnect. Re-fetches state on success."""
         self._reconnecting = True
-        delay = max(WS_RECONNECT_MIN_DELAY, _RECONNECT_COOLDOWN)
+        delay = _RECONNECT_COOLDOWN  # always start at 5s minimum
         try:
             while True:
                 _LOGGER.debug("WebSocket reconnect attempt in %ss", delay)

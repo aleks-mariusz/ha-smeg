@@ -4,7 +4,6 @@ from __future__ import annotations
 DOMAIN = "smeg"
 
 API_BASE = "https://smegcons.prod-platform.smegconnect.com"
-WS_BASE = "wss://ws.prod-platform.smegconnect.com/register"
 TENANT = "smegcons"
 
 # Config entry keys
