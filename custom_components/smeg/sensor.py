@@ -95,6 +95,20 @@ SENSOR_DESCRIPTIONS: tuple[SmegSensorDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
     SmegSensorDescription(
+        key="wifi_ssid",
+        name="Wi-Fi Network",
+        state_field="CBstaWifiSSID",
+        device_types=(DEVICE_TYPE_OVEN, DEVICE_TYPE_BLAST_CHILLER),
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    SmegSensorDescription(
+        key="firmware",
+        name="Wi-Fi FW Release",
+        state_field="CBSwRelease",
+        device_types=(DEVICE_TYPE_OVEN, DEVICE_TYPE_BLAST_CHILLER),
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    SmegSensorDescription(
         key="cb_temperature",
         name="Connectivity Board Temperature",
         state_field="CBtemperaure",   # typo is in the firmware field name

@@ -24,6 +24,15 @@ DEVICE_TYPE_NAMES = {
     DEVICE_TYPE_WINE_CHILLER: "Wine Chiller",
 }
 
+# Mapping from API modelNumber (internal ID) → commercial product code shown on the
+# physical appliance and in the SmegConnect app "Product" tab.
+# Extend this as more models are confirmed.
+SMEG_MODEL_NAMES: dict[str, str] = {
+    "0000491139": "SOP6606WS2PNR",   # Oven, steam+pyro, 60cm (confirmed)
+    "0000781784": "SBC4604WNR1",     # Blast Chiller 4-tray (confirmed)
+    # "000XXXXXXX": "SO4606WAPNR",   # Oven, steam, 4G aux (pending enrollment)
+}
+
 # Command version per device type (confirmed from Charles captures)
 DEVICE_TYPE_COMMAND_VERSION: dict[int, str] = {
     DEVICE_TYPE_OVEN: "4.0",
@@ -32,27 +41,30 @@ DEVICE_TYPE_COMMAND_VERSION: dict[int, str] = {
     DEVICE_TYPE_WINE_CHILLER: "3.0",
 }
 
-# Oven command codes (confirmed from Charles captures unless noted)
-CMD_POWER_ON = "Sys_OpSetPowerOnFeature"   # also used for set-temperature
+# Oven command codes
+CMD_POWER_ON = "Sys_OpSetPowerOnFeature"   # also used for set-temperature; confirmed
 CMD_POWER_OFF = "Sys_OpSetPowerOffFeature"
-CMD_LIGHT = "lightFeature"                 # confirmed
+CMD_LIGHT = "lightFeature"                 # confirmed from Charles captures
 CMD_KEEP_WARM = "keepWarmFeature"
 CMD_ECO_LIGHT = "ecoLightFeature"
 CMD_ECO_LOGIC = "ecoLogicFeature"
 CMD_CHILDLOCK = "childlockFeature"
+CMD_SOUND = "soundActivFeature"
+CMD_DIGITAL_CLOCK = "digClockFeature"
 CMD_TIMER1 = "timer1Feature"
 CMD_TIMER2 = "timer2Feature"
 CMD_TIMER3 = "timer3Feature"
 CMD_DISP_BRIGHTNESS = "dispBrightnessFeature"
 
-# Blast chiller command codes
+# Blast chiller command codes (RemCmd suffix → "1"/"0" values, different from oven)
 CMD_SEQ_START = "currSeqStartCmd"
 CMD_SEQ_STOP = "currSeqStopCmd"
-CMD_STEP1_TEMP = "stepOneTargetTempSetFeature"  # confirmed
+CMD_STEP1_TEMP = "stepOneTargetTempSetFeature"   # confirmed
 CMD_STEP2_TEMP = "stepTwoTargetTempSetFeature"
 CMD_STEP3_TEMP = "stepThreeTargetTempSetFeature"
 CMD_CHILLER_CHILDLOCK = "childlockRemCmdFeature"
-CMD_CHILLER_DISP_BRIGHTNESS = "dispBrightnessFeature"
+CMD_CHILLER_SOUND = "soundActivRemCmdFeature"
+CMD_CHILLER_DIGITAL_CLOCK = "digClockRemCmdFeature"   # confirmed param: digClockRemCmd
 
 # Standard request headers (sent on every authenticated call)
 STANDARD_HEADERS = {
@@ -69,5 +81,3 @@ OVEN_TEMP_STEP = 5
 
 # Platforms to set up per config entry
 PLATFORMS = ["sensor", "binary_sensor", "switch", "climate", "number"]
-
-

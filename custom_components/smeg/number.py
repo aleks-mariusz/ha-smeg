@@ -152,6 +152,35 @@ NUMBER_DESCRIPTIONS: tuple[SmegNumberDescription, ...] = (
         mode=NumberMode.SLIDER,
         device_types=(DEVICE_TYPE_BLAST_CHILLER,),
     ),
+    # Blast chiller has 2 timers only (confirmed from SmegConnect Plus app, IMG_3890)
+    SmegNumberDescription(
+        key="chiller_timer1",
+        name="Timer 1",
+        state_field="timer1",
+        command_code=CMD_TIMER1,
+        param_key="timer1",
+        native_min_value=0,
+        native_max_value=86400,
+        native_step=60,
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+        device_class=NumberDeviceClass.DURATION,
+        mode=NumberMode.BOX,
+        device_types=(DEVICE_TYPE_BLAST_CHILLER,),
+    ),
+    SmegNumberDescription(
+        key="chiller_timer2",
+        name="Timer 2",
+        state_field="timer2",
+        command_code=CMD_TIMER2,
+        param_key="timer2",
+        native_min_value=0,
+        native_max_value=86400,
+        native_step=60,
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+        device_class=NumberDeviceClass.DURATION,
+        mode=NumberMode.BOX,
+        device_types=(DEVICE_TYPE_BLAST_CHILLER,),
+    ),
 )
 
 
