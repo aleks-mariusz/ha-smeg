@@ -32,7 +32,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .api import SmegApi, SmegApiError
 from .auth import SmegAuth
-from .const import WS_RECONNECT_MAX_DELAY
+
 from .websocket import SmegWebSocket
 
 _LOGGER = logging.getLogger(__name__)
@@ -40,8 +40,9 @@ _LOGGER = logging.getLogger(__name__)
 _POLL_INTERVAL_WS   = timedelta(seconds=30)   # when WebSocket is healthy
 _POLL_INTERVAL_POLL = timedelta(seconds=10)   # when falling back to polling
 
-# Seconds to wait before each reconnect attempt
-_RECONNECT_COOLDOWN  = 10
+# Seconds before the first reconnect attempt; doubles each time (30 → 60 → 120 → 240 …)
+_RECONNECT_INITIAL   = 30
+_RECONNECT_MAX       = 300
 # Stop retrying STOMP after this many consecutive failures and use polling only
 _MAX_STOMP_FAILURES  = 3
 
@@ -195,7 +196,7 @@ class SmegCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
 
     async def _reconnect_loop(self) -> None:
         self._reconnecting = True
-        delay = _RECONNECT_COOLDOWN
+        delay = _RECONNECT_INITIAL
         try:
             while not self._stomp_disabled:
                 _LOGGER.debug("WebSocket reconnect in %ds", delay)
@@ -213,7 +214,7 @@ class SmegCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
                     raise
                 except Exception:
                     _LOGGER.debug("Reconnect attempt failed", exc_info=True)
-                delay = min(delay * 2, WS_RECONNECT_MAX_DELAY)
+                delay = min(delay * 2, _RECONNECT_MAX)
         except asyncio.CancelledError:
             pass
         finally:

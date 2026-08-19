@@ -70,6 +70,4 @@ OVEN_TEMP_STEP = 5
 # Platforms to set up per config entry
 PLATFORMS = ["sensor", "binary_sensor", "switch", "climate", "number"]
 
-# WebSocket reconnect
-WS_RECONNECT_MIN_DELAY = 1
-WS_RECONNECT_MAX_DELAY = 300
+
