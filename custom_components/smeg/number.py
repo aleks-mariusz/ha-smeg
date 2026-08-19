@@ -23,6 +23,7 @@ from .const import (
     CMD_TIMER1,
     CMD_TIMER2,
     CMD_TIMER3,
+    CMD_WATER_HARDNESS,
     DEVICE_TYPE_BLAST_CHILLER,
     DEVICE_TYPE_OVEN,
     DOMAIN,
@@ -95,6 +96,20 @@ NUMBER_DESCRIPTIONS: tuple[SmegNumberDescription, ...] = (
         native_max_value=100,
         native_step=1,
         mode=NumberMode.SLIDER,
+        device_types=(DEVICE_TYPE_OVEN,),
+    ),
+    # Oven steam boiler — water hardness affects limescale prevention frequency.
+    # App shows as a stepper (1–5 scale). Confirmed field: setHardH2O in APK.
+    SmegNumberDescription(
+        key="water_hardness",
+        name="Water Hardness",
+        state_field="waterHardness",
+        command_code=CMD_WATER_HARDNESS,
+        param_key="setHardH2O",
+        native_min_value=1,
+        native_max_value=5,
+        native_step=1,
+        mode=NumberMode.BOX,
         device_types=(DEVICE_TYPE_OVEN,),
     ),
     # --- Blast chiller numbers ---

@@ -205,6 +205,12 @@ CMD_TIMER1 = "timer1Feature"
 CMD_TIMER2 = "timer2Feature"
 CMD_TIMER3 = "timer3Feature"
 CMD_DISP_BRIGHTNESS = "dispBrightnessFeature"
+CMD_WATER_HARDNESS = "waterHardnessFeature"
+
+# Shared oven + blast chiller settings commands (no RemCmd variant for these)
+CMD_TEMP_FORMAT = "tempFormatFeature"      # param: tempFormat, values: "°C"/"°F"
+CMD_HOUR_FORMAT = "hourFormatFeature"      # param: hourFormat, values: "24h"/"12h"
+CMD_WEIGHT_FORMAT = "weightFormatFeature"  # param: weightFormat, values: "kg"/"oz"
 
 # Blast chiller command codes (RemCmd suffix → "1"/"0" values, different from oven)
 CMD_SEQ_START = "currSeqStartCmd"
@@ -230,4 +236,4 @@ OVEN_MAX_TEMP = 280
 OVEN_TEMP_STEP = 5
 
 # Platforms to set up per config entry
-PLATFORMS = ["sensor", "binary_sensor", "switch", "climate", "number"]
+PLATFORMS = ["sensor", "binary_sensor", "switch", "climate", "number", "select"]
