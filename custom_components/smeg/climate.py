@@ -109,7 +109,7 @@ class SmegOvenClimate(SmegEntity, ClimateEntity):
 
     def _check_remote_control(self) -> None:
         rc = self._state.get("remoteControl", "ON")
-        if str(rc).upper() != "ON":
+        if str(rc).lower() not in ("on", "true", "1"):
             raise HomeAssistantError(
                 "Remote control is disabled on this appliance. "
                 "Enable it on the appliance display before sending commands."
@@ -119,19 +119,30 @@ class SmegOvenClimate(SmegEntity, ClimateEntity):
         self._check_remote_control()
         if hvac_mode == HVACMode.HEAT:
             await self._send_command(CMD_POWER_ON, [])
+            self._attr_hvac_mode = HVACMode.HEAT
         else:
             await self._send_command(CMD_POWER_OFF, [])
+            self._attr_hvac_mode = HVACMode.OFF
+        self.async_write_ha_state()
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         self._check_remote_control()
         temp = kwargs.get("temperature")
         if temp is None:
             return
-        # Setting temperature also turns the oven on
         await self._send_command(
             CMD_POWER_ON,
             [{"parameterKey": "currStepTargetTempSet", "parameterValue": int(temp)}],
         )
+        self._attr_hvac_mode = HVACMode.HEAT
+        self._attr_target_temperature = float(temp)
+        self.async_write_ha_state()
+
+    def _handle_coordinator_update(self) -> None:
+        """Clear optimistic overrides when coordinator gets real data."""
+        self._attr_hvac_mode = None
+        self._attr_target_temperature = None
+        super()._handle_coordinator_update()
 
     async def _send_command(self, code: str, params: list) -> None:
         try:
@@ -143,3 +154,6 @@ class SmegOvenClimate(SmegEntity, ClimateEntity):
             )
         except Exception:
             _LOGGER.error("Failed to send command %s to %s", code, self._device_code, exc_info=True)
+            self._attr_hvac_mode = None
+            self._attr_target_temperature = None
+            self.async_write_ha_state()

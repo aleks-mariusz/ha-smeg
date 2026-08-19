@@ -34,7 +34,6 @@ class SmegSwitchDescription(SwitchEntityDescription):
     param_key: str = ""
     param_value_on: str = "ON"
     param_value_off: str = "OFF"
-    # If True, the command is blocked when remoteControl == "OFF"
     requires_remote_control: bool = True
     device_types: tuple[int, ...] = ()
 
@@ -68,7 +67,6 @@ SWITCH_DESCRIPTIONS: tuple[SmegSwitchDescription, ...] = (
         param_key="ecoLight",
         param_value_on="ON",
         param_value_off="OFF",
-        # Settings commands — work regardless of remote control mode
         requires_remote_control=False,
         device_types=(DEVICE_TYPE_OVEN,),
     ),
@@ -94,8 +92,6 @@ SWITCH_DESCRIPTIONS: tuple[SmegSwitchDescription, ...] = (
         requires_remote_control=False,
         device_types=(DEVICE_TYPE_OVEN,),
     ),
-    # Blast chiller: childlock uses the RemCmd command pattern.
-    # paramKey follows digClockRemCmd convention → childlockRemCmd, values "1"/"0".
     SmegSwitchDescription(
         key="chiller_childlock",
         name="Child Lock",
@@ -141,9 +137,18 @@ class SmegSwitchEntity(SmegEntity, SwitchEntity):
         super().__init__(coordinator, device_code)
         self.entity_description = description
         self._attr_unique_id = f"{device_code}_{description.key}"
+        self._optimistic_on: bool | None = None
+
+    def _handle_coordinator_update(self) -> None:
+        """Clear the optimistic cache whenever the coordinator gets real data."""
+        self._optimistic_on = None
+        super()._handle_coordinator_update()
 
     @property
     def is_on(self) -> bool | None:
+        # Show the commanded state immediately; real state catches up on next poll/push
+        if self._optimistic_on is not None:
+            return self._optimistic_on
         value = self._state.get(self.entity_description.state_field)
         if value is None:
             return None
@@ -152,16 +157,20 @@ class SmegSwitchEntity(SmegEntity, SwitchEntity):
     async def async_turn_on(self, **kwargs) -> None:
         self._check_remote_control()
         await self._send(self.entity_description.param_value_on)
+        self._optimistic_on = True
+        self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs) -> None:
         self._check_remote_control()
         await self._send(self.entity_description.param_value_off)
+        self._optimistic_on = False
+        self.async_write_ha_state()
 
     def _check_remote_control(self) -> None:
         if not self.entity_description.requires_remote_control:
             return
         rc = self._state.get("remoteControl", "ON")
-        if str(rc).upper() != "ON":
+        if str(rc).lower() not in ("on", "true", "1"):
             raise HomeAssistantError(
                 "Remote control is disabled on this appliance. "
                 "Enable it on the appliance display before sending commands."
@@ -181,3 +190,6 @@ class SmegSwitchEntity(SmegEntity, SwitchEntity):
                 "Failed to send %s=%s to %s", desc.command_on, value, self._device_code,
                 exc_info=True,
             )
+            # Clear optimistic state on failure so we don't show wrong state
+            self._optimistic_on = None
+            self.async_write_ha_state()

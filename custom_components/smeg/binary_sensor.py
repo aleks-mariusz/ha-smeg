@@ -1,7 +1,7 @@
 """Binary sensor entities for Smeg appliances."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from homeassistant.components.binary_sensor import (
@@ -22,7 +22,8 @@ from .entity import SmegEntity
 @dataclass(frozen=True, kw_only=True)
 class SmegBinarySensorDescription(BinarySensorEntityDescription):
     state_field: str = ""
-    on_value: str = "true"
+    # All string values (case-insensitive) that mean "on/true"
+    on_values: tuple[str, ...] = ("true", "on", "1")
     device_types: tuple[int, ...] = ()
 
 
@@ -31,7 +32,7 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[SmegBinarySensorDescription, ...] = (
         key="door",
         name="Door",
         state_field="doorState",
-        on_value="OPEN",
+        on_values=("OPEN", "open"),
         device_class=BinarySensorDeviceClass.DOOR,
         device_types=(DEVICE_TYPE_OVEN, DEVICE_TYPE_BLAST_CHILLER),
     ),
@@ -39,7 +40,7 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[SmegBinarySensorDescription, ...] = (
         key="cloud_connected",
         name="Cloud Connected",
         state_field="cloudConnected",
-        on_value="True",
+        on_values=("True", "true", "ON", "on"),
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         entity_category=EntityCategory.DIAGNOSTIC,
         device_types=(DEVICE_TYPE_OVEN, DEVICE_TYPE_BLAST_CHILLER),
@@ -48,8 +49,8 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[SmegBinarySensorDescription, ...] = (
         key="remote_control",
         name="Remote Control Enabled",
         state_field="remoteControl",
-        on_value="ON",
-        # Diagnostic but enabled — user needs to know if this is OFF when commands fail
+        # Some devices report "ON", others "true" (APK demo data confirms both)
+        on_values=("ON", "on", "true"),
         entity_category=EntityCategory.DIAGNOSTIC,
         device_types=(DEVICE_TYPE_OVEN, DEVICE_TYPE_BLAST_CHILLER),
     ),
@@ -57,21 +58,21 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[SmegBinarySensorDescription, ...] = (
         key="oven_busy",
         name="Busy",
         state_field="ovenBusy",
-        on_value="oven busy",
+        on_values=("oven busy",),
         device_types=(DEVICE_TYPE_OVEN,),
     ),
     SmegBinarySensorDescription(
         key="meat_probe",
         name="Meat Probe Inserted",
         state_field="meatProbeInserted",
-        on_value="meat probe inserted",
+        on_values=("meat probe inserted",),
         device_types=(DEVICE_TYPE_OVEN, DEVICE_TYPE_BLAST_CHILLER),
     ),
     SmegBinarySensorDescription(
         key="child_lock",
         name="Child Lock Active",
         state_field="childlock",
-        on_value="ON",
+        on_values=("ON", "on", "true", "1"),
         device_class=BinarySensorDeviceClass.LOCK,
         device_types=(DEVICE_TYPE_OVEN, DEVICE_TYPE_BLAST_CHILLER),
     ),
@@ -115,4 +116,5 @@ class SmegBinarySensorEntity(SmegEntity, BinarySensorEntity):
         value = self._state.get(self.entity_description.state_field)
         if value is None:
             return None
-        return str(value).lower() == self.entity_description.on_value.lower()
+        v = str(value).lower()
+        return v in {s.lower() for s in self.entity_description.on_values}
