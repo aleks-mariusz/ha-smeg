@@ -2,7 +2,7 @@
 
 State delivery:
   Primary:  STOMP WebSocket push (real-time, ~1-5s latency)
-  Fallback: REST polling every 30s when WebSocket is disconnected
+  Fallback: REST polling every 10s when WebSocket is unavailable
 
 self.data layout:
   {
@@ -36,10 +36,14 @@ from .const import WS_RECONNECT_MAX_DELAY
 from .websocket import SmegWebSocket
 
 _LOGGER = logging.getLogger(__name__)
-_POLL_INTERVAL = timedelta(seconds=30)
 
-# Minimum seconds between reconnect attempts — prevents server-ERROR storm
-_RECONNECT_COOLDOWN = 5
+_POLL_INTERVAL_WS   = timedelta(seconds=30)   # when WebSocket is healthy
+_POLL_INTERVAL_POLL = timedelta(seconds=10)   # when falling back to polling
+
+# Seconds to wait before each reconnect attempt
+_RECONNECT_COOLDOWN  = 10
+# Stop retrying STOMP after this many consecutive failures and use polling only
+_MAX_STOMP_FAILURES  = 3
 
 
 class SmegCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
@@ -55,14 +59,16 @@ class SmegCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
             hass,
             _LOGGER,
             name="smeg",
-            update_interval=_POLL_INTERVAL,
+            update_interval=_POLL_INTERVAL_WS,
         )
         self.auth = auth
         self.api = api
         self._ws: SmegWebSocket | None = None
         self._ws_connected = False
         self._reconnect_task: asyncio.Task | None = None
-        self._reconnecting = False          # guard: only one reconnect loop at a time
+        self._reconnecting = False
+        self._stomp_failures = 0      # consecutive STOMP connection failures
+        self._stomp_disabled = False  # True once we give up on STOMP
         self.data: dict[str, dict[str, Any]] = {}
 
     # ------------------------------------------------------------------
@@ -70,13 +76,14 @@ class SmegCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
     # ------------------------------------------------------------------
 
     async def async_setup(self) -> None:
-        """Fetch device list + initial state, then open WebSocket."""
+        """Fetch device list + initial state, then try WebSocket."""
         await self._fetch_all_devices()
         await self._start_websocket()
 
     async def async_stop(self) -> None:
         """Called when the config entry is unloaded."""
-        self._reconnecting = True           # prevent any new reconnects
+        self._reconnecting = True   # block new reconnects
+        self._stomp_disabled = True
         if self._reconnect_task and not self._reconnect_task.done():
             self._reconnect_task.cancel()
             try:
@@ -87,15 +94,13 @@ class SmegCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
             await self._ws.async_disconnect()
 
     # ------------------------------------------------------------------
-    # DataUpdateCoordinator override (fallback polling)
+    # DataUpdateCoordinator override (polling fallback)
     # ------------------------------------------------------------------
 
     async def _async_update_data(self) -> dict[str, dict[str, Any]]:
-        """Called on the 30s interval; only polls when WebSocket is down."""
         if self._ws_connected:
             return self.data
 
-        _LOGGER.debug("WebSocket not connected — polling REST API")
         for code in list(self.data):
             try:
                 info = await self.api.get_device_info(code)
@@ -111,7 +116,8 @@ class SmegCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
     # ------------------------------------------------------------------
 
     async def _start_websocket(self) -> None:
-        """Create and connect a fresh SmegWebSocket. Sets _ws_connected."""
+        if self._stomp_disabled:
+            return
         if self._ws:
             await self._ws.async_disconnect()
 
@@ -125,22 +131,48 @@ class SmegCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         try:
             await self._ws.async_connect()
             self._ws_connected = True
+            self.update_interval = _POLL_INTERVAL_WS
         except Exception:
-            _LOGGER.warning(
-                "Failed to connect WebSocket — will rely on polling", exc_info=True
-            )
+            _LOGGER.warning("Failed to connect WebSocket — using polling", exc_info=True)
             self._ws_connected = False
+            self._stomp_failures += 1
+            self._check_stomp_failure_limit()
+
+    def _check_stomp_failure_limit(self) -> None:
+        """After too many failures, give up on STOMP permanently (until HA restart)."""
+        if self._stomp_failures >= _MAX_STOMP_FAILURES and not self._stomp_disabled:
+            self._stomp_disabled = True
+            self.update_interval = _POLL_INTERVAL_POLL
+            _LOGGER.warning(
+                "Smeg STOMP WebSocket failed %d times in a row — "
+                "switching to %ds REST polling only. "
+                "The server may be rate-limiting after a previous connection storm. "
+                "Restart Home Assistant to retry WebSocket.",
+                self._stomp_failures,
+                _POLL_INTERVAL_POLL.seconds,
+            )
 
     async def _on_ws_disconnect(self, _payload: None) -> None:
-        """Called by SmegWebSocket when the connection drops."""
+        """Called by SmegWebSocket when the connection drops or gets a STOMP ERROR."""
         self._ws_connected = False
-        if self._reconnecting:
+        self._stomp_failures += 1
+        self._check_stomp_failure_limit()
+
+        if self._stomp_disabled or self._reconnecting:
             return
-        _LOGGER.warning("Smeg WebSocket disconnected — scheduling reconnect")
+
+        _LOGGER.warning(
+            "Smeg WebSocket disconnected (failure %d/%d) — scheduling reconnect",
+            self._stomp_failures,
+            _MAX_STOMP_FAILURES,
+        )
         self._schedule_reconnect()
 
     async def _on_ws_message(self, payload: dict[str, Any]) -> None:
         """Called by SmegWebSocket on each inbound state push."""
+        # Receiving a real message means STOMP is healthy — reset failure counter
+        self._stomp_failures = 0
+
         device_code = payload.get("deviceCode")
         status = payload.get("status")
         if not device_code or not status:
@@ -153,34 +185,35 @@ class SmegCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         self.async_set_updated_data(self.data)
 
     def _schedule_reconnect(self) -> None:
-        """Schedule _reconnect_loop as a background task — only one at a time."""
-        if self._reconnecting:
+        if self._reconnecting or self._stomp_disabled:
             return
         if self._reconnect_task and not self._reconnect_task.done():
-            return                          # already running
+            return
         self._reconnect_task = self.hass.async_create_task(
             self._reconnect_loop(), name="smeg_ws_reconnect"
         )
 
     async def _reconnect_loop(self) -> None:
-        """Exponential backoff reconnect. Re-fetches state on success."""
         self._reconnecting = True
-        delay = _RECONNECT_COOLDOWN  # always start at 5s minimum
+        delay = _RECONNECT_COOLDOWN
         try:
-            while True:
-                _LOGGER.debug("WebSocket reconnect attempt in %ss", delay)
+            while not self._stomp_disabled:
+                _LOGGER.debug("WebSocket reconnect in %ds", delay)
                 await asyncio.sleep(delay)
                 try:
                     await self._start_websocket()
-                    await self._fetch_all_devices()
-                    self.async_set_updated_data(self.data)
-                    _LOGGER.info("Smeg WebSocket reconnected successfully")
-                    return
+                    if self._ws_connected:
+                        await self._fetch_all_devices()
+                        self.async_set_updated_data(self.data)
+                        _LOGGER.info("Smeg WebSocket reconnected successfully")
+                        return
+                    if self._stomp_disabled:
+                        return
                 except asyncio.CancelledError:
                     raise
                 except Exception:
                     _LOGGER.debug("Reconnect attempt failed", exc_info=True)
-                    delay = min(delay * 2, WS_RECONNECT_MAX_DELAY)
+                delay = min(delay * 2, WS_RECONNECT_MAX_DELAY)
         except asyncio.CancelledError:
             pass
         finally:
@@ -191,7 +224,6 @@ class SmegCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
     # ------------------------------------------------------------------
 
     async def _fetch_all_devices(self) -> None:
-        """Populate self.data with device list + current state."""
         devices_raw = await self.api.get_devices()
         for dev in devices_raw:
             code = dev["deviceCode"]

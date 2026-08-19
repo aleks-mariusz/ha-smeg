@@ -144,6 +144,11 @@ class SmegWebSocket:
         self._listen_task = None
         if self._ws and not self._ws.closed:
             try:
+                # Send STOMP DISCONNECT so the server cleans up the session immediately
+                await self._ws.send_str(_stomp_frame("DISCONNECT", {"receipt": "close"}))
+            except Exception:
+                pass
+            try:
                 await self._ws.close()
             except Exception:
                 pass
