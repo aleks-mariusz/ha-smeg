@@ -6,7 +6,7 @@ from typing import Any
 from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC, DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, SMEG_MODEL_NAMES
+from .const import DOMAIN, smeg_device_name
 from .coordinator import SmegCoordinator
 
 
@@ -31,23 +31,22 @@ class SmegEntity(CoordinatorEntity[SmegCoordinator]):
     def device_info(self) -> DeviceInfo:
         dev = self._device
         model_number = dev.get("modelNumber", "")
-        # Use the commercial product code (e.g. "SOP6606WS2PNR") if known;
-        # fall back to the internal model number from the API.
-        commercial_code = SMEG_MODEL_NAMES.get(model_number, model_number or "Unknown")
+        name = smeg_device_name(model_number)
 
-        # MAC address from state (formatted as reported by firmware)
+        # Commercial code for the model field (e.g. "SOP6606WS2PNR")
+        from .const import SMEG_MODELS  # local import avoids circular at module level
+        commercial_code = SMEG_MODELS.get(model_number, (model_number, ""))[0]
+
         mac = self._state.get("macAddress") or dev.get("physicalDeviceId", "")
-
         connections: set[tuple[str, str]] = set()
         if mac:
             connections.add((CONNECTION_NETWORK_MAC, mac.lower()))
 
         return DeviceInfo(
             identifiers={(DOMAIN, self._device_code)},
-            # Name uses commercial code so two ovens with different models are distinct
-            name=f"Smeg {commercial_code}",
+            name=name,
             manufacturer="Smeg",
-            model=commercial_code,
+            model=commercial_code or model_number,
             sw_version=dev.get("firmwareRev"),
             serial_number=dev.get("serialNumber"),
             connections=connections,

@@ -24,14 +24,67 @@ DEVICE_TYPE_NAMES = {
     DEVICE_TYPE_WINE_CHILLER: "Wine Chiller",
 }
 
-# Mapping from API modelNumber (internal ID) → commercial product code shown on the
-# physical appliance and in the SmegConnect app "Product" tab.
-# Extend this as more models are confirmed.
-SMEG_MODEL_NAMES: dict[str, str] = {
-    "0000491139": "SOP6606WS2PNR",   # Oven, steam+pyro, 60cm (confirmed)
-    "0000781784": "SBC4604WNR1",     # Blast Chiller 4-tray (confirmed)
-    # "000XXXXXXX": "SO4606WAPNR",   # Oven, steam, 4G aux (pending enrollment)
+# Full product descriptions sourced from smeg.com/smeg-connect/all-products.
+# Format: "Type / Size / Aesthetic (MODEL)" — used as the HA device name so two
+# ovens of different models are immediately distinguishable in the UI.
+#
+# Keys are the internal modelNumber from GET /api/v1/devices (e.g. "0000491139").
+# Values are (commercial_code, display_name) tuples.
+# commercial_code is what the Product tab in the app shows as "Model".
+#
+# To add a new model: provision it, read CBapplianceModelId from /info status,
+# look up the commercial code in the SmegConnect app Product tab, then add here.
+SMEG_MODELS: dict[str, tuple[str, str]] = {
+    # --- Confirmed from live devices ---
+    "0000491139": (
+        "SOP6606WS2PNR",
+        "Pyrolytic SteamOne Oven / 60 cm / Dolce Stil Novo",
+    ),
+    "0000781784": (
+        "SBC4604WNR1",
+        "Multisense Blast Chiller / 45 cm compact / Dolce Stil Novo",
+    ),
+
+    # --- Full SmegConnect catalog (smeg.com confirmed, modelNumbers TBC) ---
+    # Ovens — Dolce Stil Novo 60 cm
+    "SO6606WAPNR":  ("SO6606WAPNR",  "Omnichef Oven / 60 cm / Dolce Stil Novo"),
+    "SO6606WS4PNR": ("SO6606WS4PNR", "Steam100 Pro Oven / 60 cm / Dolce Stil Novo"),
+    "SFPR9606WTPNR":("SFPR9606WTPNR","Pyrolytic Oven / 90 cm / Dolce Stil Novo"),
+    # Ovens — Dolce Stil Novo 45 cm compact
+    "SO4606WAPNR":  ("SO4606WAPNR",  "Omnichef Oven / 45 cm compact / Dolce Stil Novo"),
+    "SO4606WS4PNR": ("SO4606WS4PNR", "Steam100 Pro Oven / 45 cm compact / Dolce Stil Novo"),
+    "SO4606WM2PNR": ("SO4606WM2PNR", "Speedwave Oven / 45 cm compact / Dolce Stil Novo"),
+    # Ovens — Linea 60 cm
+    "SO6106WAPB3":  ("SO6106WAPB3",  "Omnichef Oven / 60 cm / Linea"),
+    "SO6106WAPG":   ("SO6106WAPG",   "Omnichef Oven / 60 cm / Linea"),
+    # Ovens — Linea 45 cm compact
+    "SO4106WAPB3":  ("SO4106WAPB3",  "Omnichef Oven / 45 cm compact / Linea"),
+    "SO4106WAPG":   ("SO4106WAPG",   "Omnichef Oven / 45 cm compact / Linea"),
+    # Blast Chillers
+    "SBC4304WX":    ("SBC4304WX",    "Multisense Blast Chiller / 45 cm compact / Classica"),
+    # Wine Coolers
+    "CVI638RWN3":   ("CVI638RWN3",   "Wine Cooler / 82 cm / Dolce Stil Novo"),
+    "CVI621RWNR3":  ("CVI621RWNR3",  "Wine Cooler / 45 cm compact / Dolce Stil Novo"),
+    # Dishwashers
+    "STL324BQLLW":  ("STL324BQLLW",  "Fully-integrated Dishwasher / 60 cm / Universale"),
+    "STL7324AQLLW": ("STL7324AQLLW", "Fully-integrated Dishwasher / 60 cm / Universale"),
+    "STL7324BLW":   ("STL7324BLW",   "Fully-integrated Dishwasher / 60 cm / Universale"),
 }
+
+def smeg_device_name(model_number: str) -> str:
+    """Return the HA device display name for a given API modelNumber.
+
+    Format: 'Smeg {description} ({commercial_code})'
+    e.g.   'Smeg Pyrolytic SteamOne Oven / 60 cm / Dolce Stil Novo (SOP6606WS2PNR)'
+
+    Falls back to 'Smeg {model_number}' for unknown models.
+    """
+    entry = SMEG_MODELS.get(model_number)
+    if entry:
+        commercial_code, description = entry
+        return f"Smeg {description} ({commercial_code})"
+    # Unknown model — use the raw model number so it's still unique
+    return f"Smeg {model_number}" if model_number else "Smeg Appliance"
 
 # Command version per device type (confirmed from Charles captures)
 DEVICE_TYPE_COMMAND_VERSION: dict[int, str] = {
