@@ -21,6 +21,7 @@ from homeassistant.components.climate import (
     HVACAction,
     HVACMode,
 )
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfTemperature
 from homeassistant.core import HomeAssistant
@@ -106,13 +107,23 @@ class SmegOvenClimate(SmegEntity, ClimateEntity):
         except (TypeError, ValueError):
             return None
 
+    def _check_remote_control(self) -> None:
+        rc = self._state.get("remoteControl", "ON")
+        if str(rc).upper() != "ON":
+            raise HomeAssistantError(
+                "Remote control is disabled on this appliance. "
+                "Enable it on the appliance display before sending commands."
+            )
+
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
+        self._check_remote_control()
         if hvac_mode == HVACMode.HEAT:
             await self._send_command(CMD_POWER_ON, [])
         else:
             await self._send_command(CMD_POWER_OFF, [])
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
+        self._check_remote_control()
         temp = kwargs.get("temperature")
         if temp is None:
             return

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
@@ -33,6 +34,8 @@ class SmegSwitchDescription(SwitchEntityDescription):
     param_key: str = ""
     param_value_on: str = "ON"
     param_value_off: str = "OFF"
+    # If True, the command is blocked when remoteControl == "OFF"
+    requires_remote_control: bool = True
     device_types: tuple[int, ...] = ()
 
 
@@ -65,6 +68,8 @@ SWITCH_DESCRIPTIONS: tuple[SmegSwitchDescription, ...] = (
         param_key="ecoLight",
         param_value_on="ON",
         param_value_off="OFF",
+        # Settings commands — work regardless of remote control mode
+        requires_remote_control=False,
         device_types=(DEVICE_TYPE_OVEN,),
     ),
     SmegSwitchDescription(
@@ -75,6 +80,7 @@ SWITCH_DESCRIPTIONS: tuple[SmegSwitchDescription, ...] = (
         param_key="ecoLogic",
         param_value_on="ON",
         param_value_off="OFF",
+        requires_remote_control=False,
         device_types=(DEVICE_TYPE_OVEN,),
     ),
     SmegSwitchDescription(
@@ -85,17 +91,20 @@ SWITCH_DESCRIPTIONS: tuple[SmegSwitchDescription, ...] = (
         param_key="childlock",
         param_value_on="ON",
         param_value_off="OFF",
+        requires_remote_control=False,
         device_types=(DEVICE_TYPE_OVEN,),
     ),
+    # Blast chiller: childlock uses the RemCmd command pattern.
+    # paramKey follows digClockRemCmd convention → childlockRemCmd, values "1"/"0".
     SmegSwitchDescription(
         key="chiller_childlock",
         name="Child Lock",
         state_field="childlock",
         command_on=CMD_CHILLER_CHILDLOCK,
-        param_key="childlock",
-        # Blast chiller childlock uses "1"/"0" per the protocol doc pattern
+        param_key="childlockRemCmd",
         param_value_on="1",
         param_value_off="0",
+        requires_remote_control=False,
         device_types=(DEVICE_TYPE_BLAST_CHILLER,),
     ),
 )
@@ -138,19 +147,30 @@ class SmegSwitchEntity(SmegEntity, SwitchEntity):
         value = self._state.get(self.entity_description.state_field)
         if value is None:
             return None
-        # Handle both "ON"/"OFF" and "1"/"0" style values
         return str(value).upper() in ("ON", "1", "TRUE")
 
     async def async_turn_on(self, **kwargs) -> None:
+        self._check_remote_control()
         await self._send(self.entity_description.param_value_on)
 
     async def async_turn_off(self, **kwargs) -> None:
+        self._check_remote_control()
         await self._send(self.entity_description.param_value_off)
+
+    def _check_remote_control(self) -> None:
+        if not self.entity_description.requires_remote_control:
+            return
+        rc = self._state.get("remoteControl", "ON")
+        if str(rc).upper() != "ON":
+            raise HomeAssistantError(
+                "Remote control is disabled on this appliance. "
+                "Enable it on the appliance display before sending commands."
+            )
 
     async def _send(self, value: str) -> None:
         desc = self.entity_description
         try:
-            await api.send_command(
+            await self.coordinator.api.send_command(
                 self._device_code,
                 self._device.get("deviceTypeId", 7),
                 desc.command_on,

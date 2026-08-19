@@ -43,7 +43,8 @@ class SmegConfigFlow(ConfigFlow, domain=DOMAIN):
                 )
             except SmegAuthError:
                 errors["base"] = "invalid_auth"
-            except aiohttp.ClientError:
+            except aiohttp.ClientError as err:
+                _LOGGER.exception("Smeg cloud connection error: %s", err)
                 errors["base"] = "cannot_connect"
             except Exception:
                 _LOGGER.exception("Unexpected error during Smeg login")

@@ -10,6 +10,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntityDescription,
 )
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -21,7 +22,6 @@ from .entity import SmegEntity
 @dataclass(frozen=True, kw_only=True)
 class SmegBinarySensorDescription(BinarySensorEntityDescription):
     state_field: str = ""
-    # value in the state dict that means "on/true" — compared case-insensitively
     on_value: str = "true"
     device_types: tuple[int, ...] = ()
 
@@ -41,8 +41,17 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[SmegBinarySensorDescription, ...] = (
         state_field="cloudConnected",
         on_value="True",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
+        entity_category=EntityCategory.DIAGNOSTIC,
         device_types=(DEVICE_TYPE_OVEN, DEVICE_TYPE_BLAST_CHILLER),
-        entity_registry_enabled_default=False,
+    ),
+    SmegBinarySensorDescription(
+        key="remote_control",
+        name="Remote Control Enabled",
+        state_field="remoteControl",
+        on_value="ON",
+        # Diagnostic but enabled — user needs to know if this is OFF when commands fail
+        entity_category=EntityCategory.DIAGNOSTIC,
+        device_types=(DEVICE_TYPE_OVEN, DEVICE_TYPE_BLAST_CHILLER),
     ),
     SmegBinarySensorDescription(
         key="oven_busy",
@@ -55,21 +64,12 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[SmegBinarySensorDescription, ...] = (
         key="meat_probe",
         name="Meat Probe Inserted",
         state_field="meatProbeInserted",
-        # field is "meat probe not inserted as expected" when absent
         on_value="meat probe inserted",
         device_types=(DEVICE_TYPE_OVEN, DEVICE_TYPE_BLAST_CHILLER),
     ),
     SmegBinarySensorDescription(
-        key="remote_control",
-        name="Remote Control Enabled",
-        state_field="remoteControl",
-        on_value="ON",
-        device_types=(DEVICE_TYPE_OVEN, DEVICE_TYPE_BLAST_CHILLER),
-        entity_registry_enabled_default=False,
-    ),
-    SmegBinarySensorDescription(
         key="child_lock",
-        name="Child Lock",
+        name="Child Lock Active",
         state_field="childlock",
         on_value="ON",
         device_class=BinarySensorDeviceClass.LOCK,

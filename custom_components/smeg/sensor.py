@@ -13,6 +13,7 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+    EntityCategory,
     UnitOfTemperature,
     UnitOfTime,
 )
@@ -81,6 +82,7 @@ SENSOR_DESCRIPTIONS: tuple[SmegSensorDescription, ...] = (
         name="Error",
         state_field="failureLabel",
         device_types=(DEVICE_TYPE_OVEN,),
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     SmegSensorDescription(
         key="wifi_signal",
@@ -90,17 +92,17 @@ SENSOR_DESCRIPTIONS: tuple[SmegSensorDescription, ...] = (
         native_unit_of_measurement=SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
         device_class=SensorDeviceClass.SIGNAL_STRENGTH,
         state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=False,
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     SmegSensorDescription(
         key="cb_temperature",
         name="Connectivity Board Temperature",
-        state_field="CBtemperaure",   # note: typo is in the firmware field name
+        state_field="CBtemperaure",   # typo is in the firmware field name
         device_types=(DEVICE_TYPE_OVEN,),
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         device_class=SensorDeviceClass.TEMPERATURE,
         state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=False,
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     # --- Blast chiller sensors ---
     SmegSensorDescription(
@@ -120,7 +122,7 @@ SENSOR_DESCRIPTIONS: tuple[SmegSensorDescription, ...] = (
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         device_class=SensorDeviceClass.TEMPERATURE,
         state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=False,
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     SmegSensorDescription(
         key="compressor_runtime",
@@ -130,7 +132,7 @@ SENSOR_DESCRIPTIONS: tuple[SmegSensorDescription, ...] = (
         native_unit_of_measurement=UnitOfTime.SECONDS,
         device_class=SensorDeviceClass.DURATION,
         state_class=SensorStateClass.TOTAL_INCREASING,
-        entity_registry_enabled_default=False,
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     SmegSensorDescription(
         key="step1_target_temp",
@@ -149,7 +151,6 @@ SENSOR_DESCRIPTIONS: tuple[SmegSensorDescription, ...] = (
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         device_class=SensorDeviceClass.TEMPERATURE,
         state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=False,
     ),
 )
 
@@ -192,15 +193,20 @@ class SmegSensorEntity(SmegEntity, SensorEntity):
         if value is None:
             return None
 
-        # Oven meat probe returns 65530 when probe is not inserted
         if self.entity_description.state_field == "currTempMeatProbe":
+            # Return None when probe is not physically inserted.
+            # Oven sentinel: 65530; blast chiller sentinel: -6 (confirmed from captures).
+            # Check the insertion flag first — it's reliable regardless of sentinel value.
+            inserted = str(self._state.get("meatProbeInserted", "not inserted")).lower()
+            if "not inserted" in inserted:
+                return None
             try:
                 if int(value) >= 65000:
                     return None
             except (TypeError, ValueError):
                 pass
 
-        # Cooking remaining = duration - elapsed (both in seconds)
+        # Cooking remaining = total duration − elapsed
         if self.entity_description.state_field == "currSeqDuration":
             elapsed = self._state.get("currSeqElapsedTime", 0)
             try:

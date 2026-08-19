@@ -64,16 +64,19 @@ class SmegAuth:
         password: str,
     ) -> dict[str, str]:
         """Authenticate with Smeg cloud. Returns {accessToken, refreshToken, iotUserCode}."""
+        timeout = aiohttp.ClientTimeout(total=15)
         async with session.post(
             AUTH_ENDPOINT,
             json={"username": username, "password": password},
             headers={"x-tenant": TENANT, "Content-Type": "application/json;charset=UTF-8"},
+            timeout=timeout,
         ) as resp:
+            _LOGGER.debug("Login response HTTP %s", resp.status)
             if resp.status == 401:
                 raise SmegAuthError("Invalid credentials")
             if resp.status != 200:
                 raise SmegAuthError(f"Login failed with HTTP {resp.status}")
-            return await resp.json()
+            return await resp.json(content_type=None)
 
     @property
     def iot_user_code(self) -> str:
