@@ -1,0 +1,14 @@
+{
+  "domain": "smeg",
+  "name": "SmegConnect",
+  "version": "0.0.1",
+  "config_flow": true,
+  "documentation": "https://github.com/aleks-mariusz/smegconnect-homeassistant",
+  "issue_tracker": "https://github.com/aleks-mariusz/smegconnect-homeassistant/issues",
+  "requirements": [],
+  "dependencies": [],
+  "codeowners": [
+    "@aleks-mariusz"
+  ],
+  "iot_class": "cloud_push"
+}

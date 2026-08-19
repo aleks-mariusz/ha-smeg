@@ -1,0 +1,134 @@
+"""Climate entity for Smeg ovens.
+
+Maps to HVAC modes:
+  HVACMode.HEAT  ← appl == "ON"
+  HVACMode.OFF   ← appl == "OFF"
+
+HVAC action (sub-state):
+  HEATING  ← preheating or cooking
+  IDLE     ← standby (oven on but not running a cycle)
+  COOLING  ← cooling down after cycle
+  OFF      ← oven is off
+"""
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from homeassistant.components.climate import (
+    ClimateEntity,
+    ClimateEntityFeature,
+    HVACAction,
+    HVACMode,
+)
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import UnitOfTemperature
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+
+from .const import (
+    CMD_POWER_OFF,
+    CMD_POWER_ON,
+    DEVICE_TYPE_OVEN,
+    DOMAIN,
+    OVEN_MAX_TEMP,
+    OVEN_MIN_TEMP,
+    OVEN_TEMP_STEP,
+)
+from .coordinator import SmegCoordinator
+from .entity import SmegEntity
+
+_LOGGER = logging.getLogger(__name__)
+
+_PHASE_TO_ACTION = {
+    "preheating": HVACAction.HEATING,
+    "cooking": HVACAction.HEATING,
+    "cooling": HVACAction.COOLING,
+    "standby": HVACAction.IDLE,
+}
+
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    coordinator: SmegCoordinator = hass.data[DOMAIN][entry.entry_id]
+    entities = [
+        SmegOvenClimate(coordinator, code)
+        for code, dev in coordinator.data.items()
+        if dev.get("deviceTypeId") == DEVICE_TYPE_OVEN
+    ]
+    async_add_entities(entities)
+
+
+class SmegOvenClimate(SmegEntity, ClimateEntity):
+    """Climate entity representing a Smeg oven."""
+
+    _attr_name = "Oven"
+    _attr_hvac_modes = [HVACMode.HEAT, HVACMode.OFF]
+    _attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE
+    _attr_temperature_unit = UnitOfTemperature.CELSIUS
+    _attr_min_temp = OVEN_MIN_TEMP
+    _attr_max_temp = OVEN_MAX_TEMP
+    _attr_target_temperature_step = OVEN_TEMP_STEP
+
+    def __init__(self, coordinator: SmegCoordinator, device_code: str) -> None:
+        super().__init__(coordinator, device_code)
+        self._attr_unique_id = f"{device_code}_climate"
+
+    @property
+    def hvac_mode(self) -> HVACMode:
+        appl = self._state.get("appl", "OFF")
+        return HVACMode.HEAT if str(appl).upper() == "ON" else HVACMode.OFF
+
+    @property
+    def hvac_action(self) -> HVACAction:
+        if self.hvac_mode == HVACMode.OFF:
+            return HVACAction.OFF
+        phase = str(self._state.get("currStepCookingPhase", "standby")).lower()
+        return _PHASE_TO_ACTION.get(phase, HVACAction.IDLE)
+
+    @property
+    def current_temperature(self) -> float | None:
+        val = self._state.get("currTempOven")
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            return None
+
+    @property
+    def target_temperature(self) -> float | None:
+        val = self._state.get("currStepTargetTempSet")
+        try:
+            t = float(val)
+            return t if t > 0 else None
+        except (TypeError, ValueError):
+            return None
+
+    async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
+        if hvac_mode == HVACMode.HEAT:
+            await self._send_command(CMD_POWER_ON, [])
+        else:
+            await self._send_command(CMD_POWER_OFF, [])
+
+    async def async_set_temperature(self, **kwargs: Any) -> None:
+        temp = kwargs.get("temperature")
+        if temp is None:
+            return
+        # Setting temperature also turns the oven on
+        await self._send_command(
+            CMD_POWER_ON,
+            [{"parameterKey": "currStepTargetTempSet", "parameterValue": int(temp)}],
+        )
+
+    async def _send_command(self, code: str, params: list) -> None:
+        try:
+            await self.coordinator.api.send_command(
+                self._device_code,
+                self._device.get("deviceTypeId", DEVICE_TYPE_OVEN),
+                code,
+                params,
+            )
+        except Exception:
+            _LOGGER.error("Failed to send command %s to %s", code, self._device_code, exc_info=True)
