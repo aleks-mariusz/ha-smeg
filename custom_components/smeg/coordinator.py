@@ -32,7 +32,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .api import SmegApi, SmegApiError
 from .auth import SmegAuth
-from .const import BLAST_CHILLER_BIT_MAP, DEVICE_TYPE_BLAST_CHILLER
+from .const import BLAST_CHILLER_ALARM_MAP, BLAST_CHILLER_BIT_MAP, DEVICE_TYPE_BLAST_CHILLER
 from .websocket import SmegWebSocket
 
 _LOGGER = logging.getLogger(__name__)
@@ -247,6 +247,17 @@ class SmegCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         child = state.get("childlockRemCmd")
         if child is not None:
             state["childlock"] = "ON" if child == 1 else "OFF"
+
+        # Synthesise alarm summary fields from individual alarmStatus_NNN bits.
+        active_alarms = [
+            label
+            for prefix, bit, label in BLAST_CHILLER_ALARM_MAP
+            if state.get(f"{prefix}_{bit:03d}", 0) == 1
+        ]
+        state["chiller_alarm_active"] = len(active_alarms) > 0
+        state["chiller_alarm_description"] = (
+            ", ".join(active_alarms) if active_alarms else "None"
+        )
 
         return state
 

@@ -93,15 +93,25 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[SmegBinarySensorDescription, ...] = (
         device_types=(DEVICE_TYPE_OVEN, DEVICE_TYPE_BLAST_CHILLER),
     ),
     # True when the appliance is reporting an active error (failureCode != 0).
-    # Oven only — blast chiller uses separate alarmStatus_* fields.
+    # Oven only — blast chiller uses alarmStatus_* bits decoded by coordinator.
     SmegBinarySensorDescription(
         key="error_active",
         name="Error Active",
         state_field="failureCode",
-        # on = any non-zero value (error present)
         on_values=(),   # handled with custom logic in is_on
         entity_category=EntityCategory.DIAGNOSTIC,
         device_types=(DEVICE_TYPE_OVEN,),
+    ),
+    # Blast chiller alarm — coordinator synthesises chiller_alarm_active from
+    # alarmStatus_* bits using BLAST_CHILLER_ALARM_MAP (BlastChillerStatusKt.java source).
+    SmegBinarySensorDescription(
+        key="chiller_alarm_active",
+        name="Error Active",
+        state_field="chiller_alarm_active",
+        on_values=("True", "true"),
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        device_types=(DEVICE_TYPE_BLAST_CHILLER,),
     ),
 )
 

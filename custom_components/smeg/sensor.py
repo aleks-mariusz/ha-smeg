@@ -107,6 +107,19 @@ SENSOR_DESCRIPTIONS: tuple[SmegSensorDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
     # -----------------------------------------------------------------------
+    # Blast chiller — alarm sensor (diagnostic)
+    # coordinator synthesises chiller_alarm_description from alarmStatus_* bits
+    # using BLAST_CHILLER_ALARM_MAP (source: BlastChillerStatusKt.java in Plus APK).
+    # Returns "None" when no alarms active; comma-separated fault names otherwise.
+    # -----------------------------------------------------------------------
+    SmegSensorDescription(
+        key="chiller_alarm_description",
+        name="Active Alarms",
+        state_field="chiller_alarm_description",
+        device_types=(DEVICE_TYPE_BLAST_CHILLER,),
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    # -----------------------------------------------------------------------
     # Shared — Wi-Fi / connectivity (diagnostic)
     # -----------------------------------------------------------------------
     SmegSensorDescription(

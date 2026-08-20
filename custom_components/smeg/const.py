@@ -292,6 +292,22 @@ BLAST_CHILLER_BIT_MAP: dict[str, str] = {
     "applState2_013": "digClockRemCmd",   # 1 = digital clock on, 0 = off
 }
 
+# Blast chiller alarm bit map.
+# Source: extractBlastChillerAlarms() in BlastChillerStatusKt.java (SmegConnect Plus APK).
+# Each entry is (alarm_register_prefix, bit_index, human_readable_label).
+# The coordinator reads alarmStatus_NNN / alarmStatus2_NNN fields and synthesises
+# chiller_alarm_active (bool) and chiller_alarm_description (str) from these.
+BLAST_CHILLER_ALARM_MAP: list[tuple[str, int, str]] = [
+    ("alarmStatus",  0,  "Probe fault"),
+    ("alarmStatus",  4,  "Compressor fault"),
+    ("alarmStatus",  6,  "Cell resistance fault"),
+    ("alarmStatus",  8,  "Evaporator fan fault"),
+    ("alarmStatus",  26, "Power and connectivity board fault"),
+    ("alarmStatus",  28, "Power and meat probe board fault"),
+    ("alarmStatus",  30, "Power and display board fault"),
+    ("alarmStatus2", 10, "Display and touch fault"),
+]
+
 # Error strings from Smeg S3 labels CDN (smeg-connect-config-app-prod.s3.eu-central-1.amazonaws.com)
 # Maps failureCode integer → human-readable description for oven errors.
 # Codes 1-9 = Err1-Err9, 10 = Err10, 0xA-0xF = ErrA-ErrF (1-indexed hex digits).
