@@ -29,7 +29,7 @@ Smeg publishes two separate apps that share the same cloud infrastructure (same 
 | **Auth endpoint** | `POST /api/v1/auth/token` | `POST /api/v2/auth/login` |
 | **Device listing** | `GET /api/v1/devices` | `POST /api/v2/devices` (with parameter list) |
 | **Command endpoint** | `POST /api/v1/devices/{code}/commands` | Same — v2 commands use the identical format |
-| **State fields** | Named fields (`doorState`, `childlock`, `appl`) | Bit arrays for blast chiller; identical named fields for any shared appliance types |
+| **State fields** | Named fields (`doorState`, `childlock`, `appl`) | Bit arrays (`applState1/2_*`) for blast chiller — decoded by integration using `BlastChillerStatusTransformer` from Plus APK |
 
 **Both apps use the same Smeg cloud.** A device enrolled via either app can be commanded via either API version. You do not need two accounts.
 
@@ -37,7 +37,7 @@ Smeg publishes two separate apps that share the same cloud infrastructure (same 
 
 **v2 device listing is scoped by app category.** `POST /api/v2/devices` only returns devices enrolled via SmegConnect Plus — ovens enrolled via SmegConnect do not appear. For this reason, the integration uses v1 as the authoritative device list source.
 
-> **Blast chiller bit arrays:** The blast chiller firmware encodes certain boolean states (door open/closed, child lock on/off, appliance on/off) as positional bits in generic `applState2_*` fields rather than named fields. This is true in both v1 and v2 — it is a firmware-level encoding choice for the SBC4604WNR1 data model, not an API version limitation. Decoding requires a device-specific ADF (Appliance Data File) that maps bit positions to feature names. See [Limitations](#limitations--known-issues).
+> **Blast chiller bit arrays:** The blast chiller firmware encodes several boolean states as positional bits in generic `applState2_*` fields. The integration decodes these using the bit map extracted from `BlastChillerStatusTransformer.java` in the SmegConnect Plus APK — child lock and appliance on/off state are fully supported. Door state (`doorState`) is **not available** for the SBC4604WNR1: no door bit exists in the firmware's state register (confirmed from Plus APK source).
 
 ---
 
@@ -118,13 +118,16 @@ Devices are named using the full commercial product code, e.g.:
 | `sensor` | Step 1/2/3 Target Temperature | Chilling program step targets |
 | `sensor` | Meat Probe Temperature | When probe connected |
 | `binary_sensor` | Meat Probe Connected | Probe insertion status |
+| `binary_sensor` | Child Lock Active | Child lock state (decoded from `applState2_001`) |
+| `binary_sensor` | Cloud Connected | Cloud connectivity status |
+| `binary_sensor` | Remote Control Enabled | Whether remote commands are accepted |
 | `number` | Step 1/2/3 Target Temperature | Set chilling step temperatures |
 | `number` | Timer 1/2 | Countdown timers |
 | `number` | Display Brightness | Screen brightness |
 | `select` | Temperature Format, Clock Format, Weight Format, Clock Font | Display settings |
 | `switch` | Sound, Child Lock | Settings |
 
-> **Note:** Door state and Child Lock state are not yet available for the blast chiller. The SBC4604WNR1 firmware encodes these as positional bits within generic `applState2_*` fields — this is the same in both v1 and v2 APIs. Decoding requires the device-specific ADF (bit-position map); once mapped empirically, these sensors will be added.
+> **Note:** Door state is not available for the blast chiller. The SBC4604WNR1 firmware does not expose door open/closed state remotely — confirmed by decompiling `BlastChillerStatusTransformer.java` from the SmegConnect Plus APK: no door bit exists in the firmware's `applState2_*` register.
 
 ---
 
@@ -192,7 +195,7 @@ All 80 SmegConnect/SmegConnect Plus supported models are in the integration's ca
 ## Limitations & Known Issues
 
 - **Local control not available** — the CB firmware shuts down its local HTTPS API (port 13335) after provisioning. All control is via the Smeg cloud.
-- **Blast chiller door/childlock state** — the SBC4604WNR1 firmware encodes door state, child lock state, and appliance on/off as bit fields in `applState2_*` registers. Both v1 and v2 APIs return this encoding — it is a firmware-level choice, not an API limitation. A device-specific ADF (bit-position map) is needed to decode them. Empirical mapping is in progress.
+- **Blast chiller door state** — the SBC4604WNR1 firmware does not expose door open/closed state. Child lock and appliance on/off are decoded and available as sensors (v0.1.6+). Door state is a confirmed firmware limitation.
 - **Oven 2 (4G AUX variant)** — devices with a CB v0.0.0 or 4G auxiliary module may not provision via the standard flow. Contact Smeg support.
 - **PARSW number** (e.g. PARSW0436) — this is static ADF metadata not returned by the live API; only the PARSW version number is available.
 - **Firmware upgrade status** — no sensor for pending OTA updates yet; planned for a future release.
