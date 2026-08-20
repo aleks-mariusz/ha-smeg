@@ -18,6 +18,29 @@ The appliance connects outbound to the Smeg cloud; there is no supported local c
 
 ---
 
+## SmegConnect vs SmegConnect Plus
+
+Smeg publishes two separate apps that share the same cloud infrastructure (same AWS backend, same account, same credentials) but target different appliance categories:
+
+| | SmegConnect | SmegConnect Plus |
+|---|---|---|
+| **Supported devices** | Ovens, dishwashers, wine coolers | Blast chillers (+ dishwashers being migrated) |
+| **API version used** | v1 (`/api/v1/…`) | v2 (`/api/v2/…`) for device listing and auth |
+| **Auth endpoint** | `POST /api/v1/auth/token` | `POST /api/v2/auth/login` |
+| **Device listing** | `GET /api/v1/devices` | `POST /api/v2/devices` (with parameter list) |
+| **Command endpoint** | `POST /api/v1/devices/{code}/commands` | Same — v2 commands use the identical format |
+| **State fields** | Named fields (`doorState`, `childlock`, `appl`) | Bit arrays for blast chiller; identical named fields for any shared appliance types |
+
+**Both apps use the same Smeg cloud.** A device enrolled via either app can be commanded via either API version. You do not need two accounts.
+
+**This integration uses v1 endpoints uniformly** for all device types. The v1 `GET /api/v1/devices` listing returns every enrolled appliance regardless of which app was used to provision it. Commands sent via v1 are confirmed working for both ovens (SmegConnect) and blast chillers (SmegConnect Plus).
+
+**v2 device listing is scoped by app category.** `POST /api/v2/devices` only returns devices enrolled via SmegConnect Plus — ovens enrolled via SmegConnect do not appear. For this reason, the integration uses v1 as the authoritative device list source.
+
+> **Blast chiller bit arrays:** The blast chiller firmware encodes certain boolean states (door open/closed, child lock on/off, appliance on/off) as positional bits in generic `applState2_*` fields rather than named fields. This is true in both v1 and v2 — it is a firmware-level encoding choice for the SBC4604WNR1 data model, not an API version limitation. Decoding requires a device-specific ADF (Appliance Data File) that maps bit positions to feature names. See [Limitations](#limitations--known-issues).
+
+---
+
 ## Prerequisites
 
 1. **A SmegConnect account** — create one in the SmegConnect or SmegConnect Plus app.
@@ -101,7 +124,7 @@ Devices are named using the full commercial product code, e.g.:
 | `select` | Temperature Format, Clock Format, Weight Format, Clock Font | Display settings |
 | `switch` | Sound, Child Lock | Settings |
 
-> **Note:** Door state and Child Lock state are not available for the blast chiller in the current API version (v1) — the blast chiller encodes these as bit arrays not named fields. This will be addressed in a future v2 API migration.
+> **Note:** Door state and Child Lock state are not yet available for the blast chiller. The SBC4604WNR1 firmware encodes these as positional bits within generic `applState2_*` fields — this is the same in both v1 and v2 APIs. Decoding requires the device-specific ADF (bit-position map); once mapped empirically, these sensors will be added.
 
 ---
 
@@ -169,7 +192,7 @@ All 80 SmegConnect/SmegConnect Plus supported models are in the integration's ca
 ## Limitations & Known Issues
 
 - **Local control not available** — the CB firmware shuts down its local HTTPS API (port 13335) after provisioning. All control is via the Smeg cloud.
-- **Blast chiller door/childlock state** — the blast chiller v1 API encodes door state and childlock state as bit arrays. Named fields are not available until v2 API migration is complete.
+- **Blast chiller door/childlock state** — the SBC4604WNR1 firmware encodes door state, child lock state, and appliance on/off as bit fields in `applState2_*` registers. Both v1 and v2 APIs return this encoding — it is a firmware-level choice, not an API limitation. A device-specific ADF (bit-position map) is needed to decode them. Empirical mapping is in progress.
 - **Oven 2 (4G AUX variant)** — devices with a CB v0.0.0 or 4G auxiliary module may not provision via the standard flow. Contact Smeg support.
 - **PARSW number** (e.g. PARSW0436) — this is static ADF metadata not returned by the live API; only the PARSW version number is available.
 - **Firmware upgrade status** — no sensor for pending OTA updates yet; planned for a future release.
