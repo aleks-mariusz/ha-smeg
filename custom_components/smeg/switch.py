@@ -38,9 +38,8 @@ class SmegSwitchDescription(SwitchEntityDescription):
     param_value_on: str = "ON"
     param_value_off: str = "OFF"
     requires_remote_control: bool = True
-    # When True: return False (not None) when state field is absent from the device state.
-    # Produces a toggle UI instead of action-button UI for devices where state is not
-    # readable (e.g. blast chiller childlock — command works but state is in bit arrays).
+    # When True: return False (not None) when state field is absent from device state,
+    # producing a toggle UI instead of action-button UI for write-only switches.
     default_off: bool = False
     device_types: tuple[int, ...] = ()
 
@@ -117,9 +116,10 @@ SWITCH_DESCRIPTIONS: tuple[SmegSwitchDescription, ...] = (
     SmegSwitchDescription(
         key="chiller_sound",
         name="Sound",
-        state_field="soundActiv",
+        # coordinator translates applState2_007 → soundActivRemCmd (v0.1.6+)
+        state_field="soundActivRemCmd",
         command_on=CMD_CHILLER_SOUND,
-        param_key="soundActiv",
+        param_key="soundActivRemCmd",
         param_value_on="1",
         param_value_off="0",
         requires_remote_control=False,
@@ -129,15 +129,13 @@ SWITCH_DESCRIPTIONS: tuple[SmegSwitchDescription, ...] = (
     SmegSwitchDescription(
         key="chiller_childlock",
         name="Child Lock",
+        # coordinator translates applState2_001 → childlockRemCmd → childlock (v0.1.6+)
         state_field="childlock",
         command_on=CMD_CHILLER_CHILDLOCK,
         param_key="childlockRemCmd",
         param_value_on="1",
         param_value_off="0",
         requires_remote_control=False,
-        # childlock absent from blast chiller v1 state (bit array) — default_off=True
-        # so HA renders it as a toggle (off) rather than action buttons (unknown)
-        default_off=True,
         device_types=(DEVICE_TYPE_BLAST_CHILLER,),
     ),
 )
