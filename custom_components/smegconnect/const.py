@@ -1,7 +1,7 @@
 """Constants for the SmegConnect integration."""
 from __future__ import annotations
 
-DOMAIN = "smeg"
+DOMAIN = "smegconnect"
 
 API_BASE = "https://smegcons.prod-platform.smegconnect.com"
 TENANT = "smegcons"
