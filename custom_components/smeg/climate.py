@@ -9,6 +9,15 @@ HVAC action (sub-state):
   IDLE     ← standby (oven on but not running a cycle)
   COOLING  ← cooling down after cycle
   OFF      ← oven is off
+
+Power command confirmed from live device query capture and APK bundle:
+  applFeature  parameterKey: "appl"  values: "ON" / "OFF"
+  (Sys_OpSetPowerOnFeature is NOT in the oven's availableCommands list)
+
+Temperature command (decoupled from power):
+  currStepTargetTempSetFeature  parameterKey: "currStepTargetTempSet"  value: int °C
+  Setting temperature does NOT turn the oven on — user must explicitly
+  set HVAC mode to HEAT to power on.
 """
 from __future__ import annotations
 
@@ -21,15 +30,15 @@ from homeassistant.components.climate import (
     HVACAction,
     HVACMode,
 )
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfTemperature
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
-    CMD_POWER_OFF,
-    CMD_POWER_ON,
+    CMD_APPL,
+    CMD_SET_TEMP,
     DEVICE_TYPE_OVEN,
     DOMAIN,
     OVEN_MAX_TEMP,
@@ -80,6 +89,8 @@ class SmegOvenClimate(SmegEntity, ClimateEntity):
 
     @property
     def hvac_mode(self) -> HVACMode:
+        if self._attr_hvac_mode is not None:
+            return self._attr_hvac_mode
         appl = self._state.get("appl", "OFF")
         return HVACMode.HEAT if str(appl).upper() == "ON" else HVACMode.OFF
 
@@ -100,6 +111,8 @@ class SmegOvenClimate(SmegEntity, ClimateEntity):
 
     @property
     def target_temperature(self) -> float | None:
+        if self._attr_target_temperature is not None:
+            return self._attr_target_temperature
         val = self._state.get("currStepTargetTempSet")
         try:
             t = float(val)
@@ -116,30 +129,30 @@ class SmegOvenClimate(SmegEntity, ClimateEntity):
             )
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
+        """Turn oven on (HEAT) or off (OFF). Requires remote control enabled."""
         self._check_remote_control()
-        if hvac_mode == HVACMode.HEAT:
-            await self._send_command(CMD_POWER_ON, [])
-            self._attr_hvac_mode = HVACMode.HEAT
-        else:
-            await self._send_command(CMD_POWER_OFF, [])
-            self._attr_hvac_mode = HVACMode.OFF
+        appl_value = "ON" if hvac_mode == HVACMode.HEAT else "OFF"
+        await self._send_command(
+            CMD_APPL,
+            [{"parameterKey": "appl", "parameterValue": appl_value}],
+        )
+        self._attr_hvac_mode = hvac_mode
         self.async_write_ha_state()
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
-        self._check_remote_control()
+        """Set target temperature. Does NOT turn the oven on."""
         temp = kwargs.get("temperature")
         if temp is None:
             return
         await self._send_command(
-            CMD_POWER_ON,
+            CMD_SET_TEMP,
             [{"parameterKey": "currStepTargetTempSet", "parameterValue": int(temp)}],
         )
-        self._attr_hvac_mode = HVACMode.HEAT
         self._attr_target_temperature = float(temp)
         self.async_write_ha_state()
 
     def _handle_coordinator_update(self) -> None:
-        """Clear optimistic overrides when coordinator gets real data."""
+        """Clear optimistic overrides when coordinator delivers real data."""
         self._attr_hvac_mode = None
         self._attr_target_temperature = None
         super()._handle_coordinator_update()
@@ -153,7 +166,9 @@ class SmegOvenClimate(SmegEntity, ClimateEntity):
                 params,
             )
         except Exception:
-            _LOGGER.error("Failed to send command %s to %s", code, self._device_code, exc_info=True)
+            _LOGGER.error(
+                "Failed to send command %s to %s", code, self._device_code, exc_info=True
+            )
             self._attr_hvac_mode = None
             self._attr_target_temperature = None
             self.async_write_ha_state()

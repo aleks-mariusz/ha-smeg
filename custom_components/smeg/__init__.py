@@ -26,6 +26,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Smeg from a config entry."""
     session = async_get_clientsession(hass)
 
+    # Migrate legacy config entry titles (created before title format was established)
+    email = entry.data.get(CONF_USERNAME, "")
+    expected_title = f"Devices registered on SmegConnect to {email}"
+    if entry.title != expected_title:
+        hass.config_entries.async_update_entry(entry, title=expected_title)
+
     auth = SmegAuth(
         session,
         access_token=entry.data[CONF_ACCESS_TOKEN],

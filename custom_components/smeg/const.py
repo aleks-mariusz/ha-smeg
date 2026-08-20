@@ -24,6 +24,20 @@ DEVICE_TYPE_NAMES = {
     DEVICE_TYPE_WINE_CHILLER: "Wine Chiller",
 }
 
+# CBapplianceCategoryId values (different from deviceTypeId in the device listing).
+# These come from the device's own firmware and appear in the status object.
+# Confirmed values from live device captures:
+#   4  = Oven          (CBapplianceCategoryId in oven status)
+#   47 = Blast Chiller (CBapplianceCategoryId in blast chiller status)
+#   17 = Dishwasher    (from APK categories.json)
+#   34 = Wine Cooler   (from APK categories.json)
+APPLIANCE_CATEGORY_NAMES: dict[int, str] = {
+    4: "Oven",
+    17: "Dishwasher",
+    34: "Wine Cooler",
+    47: "Blast Chiller",
+}
+
 # Internal modelNumber → (commercial_code, display_description) for all 80
 # SmegConnect/SmegConnect Plus supported appliances.
 #
@@ -168,6 +182,43 @@ SMEG_MODELS: dict[str, tuple[str, str]] = {
     "0000752259": ("CVI318LWX2",  "Built-in Wine Cooler / 45 cm / Classica"),
 }
 
+def decode_fw_version(value: object) -> str | None:
+    """Decode a firmware version field to a human-readable 'major.minor.patch' string.
+
+    Oven firmware fields are 24-bit little-endian integers:
+      e.g. dispBoardFwRel=2564 (0x000A04) → major=4, minor=10, patch=0 → '4.10.0'
+
+    Blast chiller firmware fields are 4-char base64 strings encoding 3 bytes:
+      e.g. dispBoardFwRel='ATEA' → bytes [1, 49, 0] → '1.49.0'
+
+    Confirmed mappings (from Product tab in SmegConnect/Plus app):
+      pwrBoardFwRel    → SOFTW Ver.
+      dispBoardFwRel   → FIRMW Ver.
+      dispBoardParFwRel → SCHTX Ver.
+      pwrBoardParFwRel  → PARSW Ver.
+    """
+    import base64 as _b64
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            raw = _b64.b64decode(value)
+            if len(raw) >= 3:
+                ver = f"{raw[0]}.{raw[1]}.{raw[2]}"
+                # "0.0.0" = firmware sentinel for absent hardware board
+                return None if ver == "0.0.0" else ver
+        except Exception:
+            pass
+        return str(value) if value else None
+    # Integer: 24-bit little-endian major.minor.patch
+    n = int(value)
+    if n == 0:
+        # 0 = board not present (e.g. auxBoardFwRel on ovens without a 4G module)
+        return None
+    ver = f"{n & 0xFF}.{(n >> 8) & 0xFF}.{(n >> 16) & 0xFF}"
+    return None if ver == "0.0.0" else ver
+
+
 def smeg_device_name(model_number: str) -> str:
     """Return the HA device display name for a given API modelNumber.
 
@@ -178,12 +229,14 @@ def smeg_device_name(model_number: str) -> str:
     """
     entry = SMEG_MODELS.get(model_number)
     if entry:
-        commercial_code, description = entry
-        return f"Smeg {description} ({commercial_code})"
+        _commercial_code, description = entry
+        # HA already shows the model field as a gray subtitle in device lists —
+        # no need to repeat the model code in the name.
+        return f"Smeg {description}"
     # Unknown model — use the raw model number so it's still unique
     return f"Smeg {model_number}" if model_number else "Smeg Appliance"
 
-# Command version per device type (confirmed from Charles captures)
+# Command version per device type ("4.0" confirmed for oven + blast chiller from Charles captures)
 DEVICE_TYPE_COMMAND_VERSION: dict[int, str] = {
     DEVICE_TYPE_OVEN: "4.0",
     DEVICE_TYPE_BLAST_CHILLER: "4.0",
@@ -191,9 +244,11 @@ DEVICE_TYPE_COMMAND_VERSION: dict[int, str] = {
     DEVICE_TYPE_WINE_CHILLER: "3.0",
 }
 
-# Oven command codes
-CMD_POWER_ON = "Sys_OpSetPowerOnFeature"   # also used for set-temperature; confirmed
-CMD_POWER_OFF = "Sys_OpSetPowerOffFeature"
+# Oven command codes (confirmed from Charles captures + live device query capture)
+# Power: applFeature confirmed from oven availableCommands list and APK bundle.
+# Sys_OpSetPowerOnFeature is NOT in oven availableCommands — using it was wrong.
+CMD_APPL = "applFeature"                   # oven on/off; param: appl, values: "ON"/"OFF"
+CMD_SET_TEMP = "currStepTargetTempSetFeature"  # set temperature; param: currStepTargetTempSet
 CMD_LIGHT = "lightFeature"                 # confirmed from Charles captures
 CMD_KEEP_WARM = "keepWarmFeature"
 CMD_ECO_LIGHT = "ecoLightFeature"
@@ -208,11 +263,12 @@ CMD_DISP_BRIGHTNESS = "dispBrightnessFeature"
 CMD_WATER_HARDNESS = "waterHardnessFeature"
 
 # Shared oven + blast chiller settings commands (no RemCmd variant for these)
-CMD_TEMP_FORMAT = "tempFormatFeature"      # param: tempFormat, values: "°C"/"°F"
-CMD_HOUR_FORMAT = "hourFormatFeature"      # param: hourFormat, values: "24h"/"12h"
-CMD_WEIGHT_FORMAT = "weightFormatFeature"  # param: weightFormat, values: "kg"/"oz"
+CMD_TEMP_FORMAT = "tempFormatFeature"      # param: tempFormat; oven="°C"/"°F", chiller="0"/"1"
+CMD_HOUR_FORMAT = "hourFormatFeature"      # param: hourFormat; oven="24h"/"12h", chiller="0"/"1"
+CMD_WEIGHT_FORMAT = "weightFormatFeature"  # param: weightFormat; oven="kg"/"oz", chiller="0"/"1"
 
-# Blast chiller command codes (RemCmd suffix → "1"/"0" values, different from oven)
+# Blast chiller command codes (confirmed from SmegConnect Plus live capture)
+CMD_CHILLER_APPL = "applRemCmdFeature"     # blast chiller on/off; param: applRemCmd, "1"/"0"
 CMD_SEQ_START = "currSeqStartCmd"
 CMD_SEQ_STOP = "currSeqStopCmd"
 CMD_STEP1_TEMP = "stepOneTargetTempSetFeature"   # confirmed
@@ -221,6 +277,47 @@ CMD_STEP3_TEMP = "stepThreeTargetTempSetFeature"
 CMD_CHILLER_CHILDLOCK = "childlockRemCmdFeature"
 CMD_CHILLER_SOUND = "soundActivRemCmdFeature"
 CMD_CHILLER_DIGITAL_CLOCK = "digClockRemCmdFeature"   # confirmed param: digClockRemCmd
+
+# Error strings from Smeg S3 labels CDN (smeg-connect-config-app-prod.s3.eu-central-1.amazonaws.com)
+# Maps failureCode integer → human-readable description for oven errors.
+# Codes 1-9 = Err1-Err9, 10 = Err10, 0xA-0xF = ErrA-ErrF (1-indexed hex digits).
+OVEN_ERROR_LABELS: dict[int, str] = {
+    1: "Error 1. Please contact Customer Support",
+    2: "Error 2. Please contact Customer Support",
+    3: "Error 3. Please contact Customer Support",
+    4: "Error 4. Please contact Customer Support",
+    5: "Error 5. Please contact Customer Support",
+    6: "Error 6. Please contact Customer Support",
+    7: "Error 7. Please contact Customer Support",
+    8: "Error 8. Please contact Customer Support",
+    9: "Error 9. Please contact Customer Support",
+    10: "Error 10. Please contact Customer Support",
+    11: "Error 11. Please contact Customer Support",
+    12: "Error 12. Please contact Customer Support",
+    13: "Error 13. Please contact Customer Support",
+    14: "Error 14. Please contact Customer Support",
+    15: "Error 15. Please contact Customer Support",
+    16: "Error 16. Please contact Customer Support",
+    17: "Error 17. Please contact Customer Support",
+    0xA: "Error A. Please contact Customer Support",
+    0xB: "Error B. Please contact Customer Support",
+    0xC: "Error C. Please contact Customer Support",
+    0xD: "Error D. Please contact Customer Support",
+    0xE: "Error E. Please contact Customer Support",
+    0xF: "Error F. Please contact Customer Support",
+}
+
+BLAST_CHILLER_ERROR_LABELS: dict[int, str] = {
+    1: "Error 1. Please contact Customer Support",
+    3: "Error 3. Please contact Customer Support",
+    4: "Error 4. Please contact Customer Support",
+    5: "Error 5. Please contact Customer Support",
+    10: "Error 10. Please contact Customer Support",
+    0xF: "Error F. Please contact Customer Support",
+}
+
+# failureLabel sentinel returned by the API when there is no active error
+FAILURE_LABEL_NONE = "notification.none"
 
 # Standard request headers (sent on every authenticated call)
 STANDARD_HEADERS = {

@@ -1,7 +1,7 @@
 """Binary sensor entities for Smeg appliances."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from homeassistant.components.binary_sensor import (
@@ -22,7 +22,9 @@ from .entity import SmegEntity
 @dataclass(frozen=True, kw_only=True)
 class SmegBinarySensorDescription(BinarySensorEntityDescription):
     state_field: str = ""
-    # All string values (case-insensitive) that mean "on/true"
+    # All string values (case-insensitive) that mean "on/true".
+    # Note: blast chiller returns integers for many boolean fields, so "1" must be included
+    # where the oven might only use "ON"/"true".
     on_values: tuple[str, ...] = ("true", "on", "1")
     device_types: tuple[int, ...] = ()
 
@@ -34,13 +36,18 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[SmegBinarySensorDescription, ...] = (
         state_field="doorState",
         on_values=("OPEN", "open"),
         device_class=BinarySensorDeviceClass.DOOR,
-        device_types=(DEVICE_TYPE_OVEN, DEVICE_TYPE_BLAST_CHILLER),
+        # Blast chiller does NOT have a named doorState field in v1 state —
+        # its door state is encoded in applState2_* bit arrays.
+        # TODO v2 migration: decode bit arrays once ADF mapping is available.
+        device_types=(DEVICE_TYPE_OVEN,),
     ),
     SmegBinarySensorDescription(
         key="cloud_connected",
         name="Cloud Connected",
         state_field="cloudConnected",
-        on_values=("True", "true", "ON", "on"),
+        # Oven returns JSON boolean true; blast chiller also returns boolean true.
+        # str(True).lower() = "true" which matches.
+        on_values=("true", "on", "1"),
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         entity_category=EntityCategory.DIAGNOSTIC,
         device_types=(DEVICE_TYPE_OVEN, DEVICE_TYPE_BLAST_CHILLER),
@@ -49,9 +56,11 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[SmegBinarySensorDescription, ...] = (
         key="remote_control",
         name="Remote Control Enabled",
         state_field="remoteControl",
-        # Some devices report "ON", others "true" (APK demo data confirms both)
-        on_values=("ON", "on", "true"),
-        entity_category=EntityCategory.DIAGNOSTIC,
+        # Oven returns "ON" (string). Blast chiller returns integer 1.
+        # Confirmed from live device query captures.
+        # Not diagnostic — this is operationally important: most commands fail silently
+        # when remote control is OFF. No entity_category → appears in main sensors section.
+        on_values=("ON", "on", "true", "1"),
         device_types=(DEVICE_TYPE_OVEN, DEVICE_TYPE_BLAST_CHILLER),
     ),
     SmegBinarySensorDescription(
@@ -61,11 +70,15 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[SmegBinarySensorDescription, ...] = (
         on_values=("oven busy",),
         device_types=(DEVICE_TYPE_OVEN,),
     ),
+    # Renamed from "Meat Probe Inserted": the device reports whether the probe is
+    # electrically connected, not whether food is being probed.
+    # Oven: "meat probe not inserted as expected" string.
+    # Blast chiller: integer 0 (not connected) / 1 (connected).
     SmegBinarySensorDescription(
         key="meat_probe",
-        name="Meat Probe Inserted",
+        name="Meat Probe Connected",
         state_field="meatProbeInserted",
-        on_values=("meat probe inserted",),
+        on_values=("meat probe inserted", "1", "true"),
         device_types=(DEVICE_TYPE_OVEN, DEVICE_TYPE_BLAST_CHILLER),
     ),
     SmegBinarySensorDescription(
@@ -74,7 +87,22 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[SmegBinarySensorDescription, ...] = (
         state_field="childlock",
         on_values=("ON", "on", "true", "1"),
         device_class=BinarySensorDeviceClass.LOCK,
-        device_types=(DEVICE_TYPE_OVEN, DEVICE_TYPE_BLAST_CHILLER),
+        # Blast chiller: no named childlock field in v1 state (encoded in bit arrays).
+        # Oven: if child lock is physically active on the oven display, the oven firmware
+        # will ALSO block remote commands — the childlockFeature command may be accepted
+        # (202) but silently ignored until child lock is disabled on the physical display.
+        device_types=(DEVICE_TYPE_OVEN,),
+    ),
+    # True when the appliance is reporting an active error (failureCode != 0).
+    # Oven only — blast chiller uses separate alarmStatus_* fields.
+    SmegBinarySensorDescription(
+        key="error_active",
+        name="Error Active",
+        state_field="failureCode",
+        # on = any non-zero value (error present)
+        on_values=(),   # handled with custom logic in is_on
+        entity_category=EntityCategory.DIAGNOSTIC,
+        device_types=(DEVICE_TYPE_OVEN,),
     ),
 )
 
@@ -116,5 +144,13 @@ class SmegBinarySensorEntity(SmegEntity, BinarySensorEntity):
         value = self._state.get(self.entity_description.state_field)
         if value is None:
             return None
+
+        # Error Active: True when failureCode is a non-zero integer
+        if self.entity_description.key == "error_active":
+            try:
+                return int(value) != 0
+            except (TypeError, ValueError):
+                return None
+
         v = str(value).lower()
         return v in {s.lower() for s in self.entity_description.on_values}

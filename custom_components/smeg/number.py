@@ -11,7 +11,7 @@ from homeassistant.components.number import (
     NumberMode,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfTemperature, UnitOfTime
+from homeassistant.const import EntityCategory, UnitOfTemperature, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -96,10 +96,11 @@ NUMBER_DESCRIPTIONS: tuple[SmegNumberDescription, ...] = (
         native_max_value=100,
         native_step=1,
         mode=NumberMode.SLIDER,
+        entity_category=EntityCategory.CONFIG,
         device_types=(DEVICE_TYPE_OVEN,),
     ),
     # Oven steam boiler — water hardness affects limescale prevention frequency.
-    # App shows as a stepper (1–5 scale). Confirmed field: setHardH2O in APK.
+    # App shows as a stepper (1–5 scale). Confirmed field: waterHardness/setHardH2O in APK.
     SmegNumberDescription(
         key="water_hardness",
         name="Water Hardness",
@@ -110,6 +111,7 @@ NUMBER_DESCRIPTIONS: tuple[SmegNumberDescription, ...] = (
         native_max_value=5,
         native_step=1,
         mode=NumberMode.BOX,
+        entity_category=EntityCategory.CONFIG,
         device_types=(DEVICE_TYPE_OVEN,),
     ),
     # --- Blast chiller numbers ---
@@ -165,6 +167,7 @@ NUMBER_DESCRIPTIONS: tuple[SmegNumberDescription, ...] = (
         native_max_value=100,
         native_step=1,
         mode=NumberMode.SLIDER,
+        entity_category=EntityCategory.CONFIG,
         device_types=(DEVICE_TYPE_BLAST_CHILLER,),
     ),
     # Blast chiller has 2 timers only (confirmed from SmegConnect Plus app, IMG_3890)

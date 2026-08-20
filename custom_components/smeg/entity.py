@@ -47,7 +47,7 @@ class SmegEntity(CoordinatorEntity[SmegCoordinator]):
             name=name,
             manufacturer="Smeg",
             model=commercial_code or model_number,
-            sw_version=dev.get("firmwareRev"),
+            sw_version=None,   # explicit None clears cached value; CB firmware in diagnostic sensor
             serial_number=dev.get("serialNumber"),
             connections=connections,
         )

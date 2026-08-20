@@ -63,11 +63,16 @@ class SmegApi:
             headers=headers,
             json=body,
         ) as resp:
-            await _check(resp, expected=202)
+            await _check(resp, expected_range=(200, 202))
 
 
-async def _check(resp: aiohttp.ClientResponse, expected: int = 200) -> None:
-    if resp.status == expected:
+async def _check(
+    resp: aiohttp.ClientResponse,
+    expected: int = 200,
+    expected_range: tuple[int, ...] | None = None,
+) -> None:
+    ok = expected_range if expected_range else (expected,)
+    if resp.status in ok:
         return
     text = await resp.text()
     raise SmegApiError(f"HTTP {resp.status}: {text[:200]}")

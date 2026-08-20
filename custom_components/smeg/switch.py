@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -13,9 +14,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .const import (
     CMD_CHILDLOCK,
     CMD_CHILLER_CHILDLOCK,
-    CMD_CHILLER_DIGITAL_CLOCK,
     CMD_CHILLER_SOUND,
-    CMD_DIGITAL_CLOCK,
     CMD_ECO_LIGHT,
     CMD_ECO_LOGIC,
     CMD_KEEP_WARM,
@@ -39,6 +38,10 @@ class SmegSwitchDescription(SwitchEntityDescription):
     param_value_on: str = "ON"
     param_value_off: str = "OFF"
     requires_remote_control: bool = True
+    # When True: return False (not None) when state field is absent from the device state.
+    # Produces a toggle UI instead of action-button UI for devices where state is not
+    # readable (e.g. blast chiller childlock — command works but state is in bit arrays).
+    default_off: bool = False
     device_types: tuple[int, ...] = ()
 
 
@@ -65,24 +68,26 @@ SWITCH_DESCRIPTIONS: tuple[SmegSwitchDescription, ...] = (
     ),
     SmegSwitchDescription(
         key="eco_light",
-        name="Eco Light",
+        name="Eco Light Mode",
         state_field="ecoLight",
         command_on=CMD_ECO_LIGHT,
         param_key="ecoLight",
         param_value_on="ON",
         param_value_off="OFF",
         requires_remote_control=False,
+        entity_category=EntityCategory.CONFIG,
         device_types=(DEVICE_TYPE_OVEN,),
     ),
     SmegSwitchDescription(
         key="eco_logic",
-        name="Eco Logic",
+        name="Eco Heating Mode",
         state_field="ecoLogic",
         command_on=CMD_ECO_LOGIC,
         param_key="ecoLogic",
         param_value_on="ON",
         param_value_off="OFF",
         requires_remote_control=False,
+        entity_category=EntityCategory.CONFIG,
         device_types=(DEVICE_TYPE_OVEN,),
     ),
     SmegSwitchDescription(
@@ -105,17 +110,7 @@ SWITCH_DESCRIPTIONS: tuple[SmegSwitchDescription, ...] = (
         param_value_on="ON",
         param_value_off="OFF",
         requires_remote_control=False,
-        device_types=(DEVICE_TYPE_OVEN,),
-    ),
-    SmegSwitchDescription(
-        key="digital_clock",
-        name="Digital Clock",
-        state_field="digClock",
-        command_on=CMD_DIGITAL_CLOCK,
-        param_key="digClock",
-        param_value_on="ON",
-        param_value_off="OFF",
-        requires_remote_control=False,
+        entity_category=EntityCategory.CONFIG,
         device_types=(DEVICE_TYPE_OVEN,),
     ),
     # Blast chiller uses RemCmd variants (confirmed naming pattern)
@@ -128,17 +123,7 @@ SWITCH_DESCRIPTIONS: tuple[SmegSwitchDescription, ...] = (
         param_value_on="1",
         param_value_off="0",
         requires_remote_control=False,
-        device_types=(DEVICE_TYPE_BLAST_CHILLER,),
-    ),
-    SmegSwitchDescription(
-        key="chiller_digital_clock",
-        name="Digital Clock",
-        state_field="digClock",
-        command_on=CMD_CHILLER_DIGITAL_CLOCK,
-        param_key="digClockRemCmd",
-        param_value_on="1",
-        param_value_off="0",
-        requires_remote_control=False,
+        entity_category=EntityCategory.CONFIG,
         device_types=(DEVICE_TYPE_BLAST_CHILLER,),
     ),
     SmegSwitchDescription(
@@ -150,6 +135,9 @@ SWITCH_DESCRIPTIONS: tuple[SmegSwitchDescription, ...] = (
         param_value_on="1",
         param_value_off="0",
         requires_remote_control=False,
+        # childlock absent from blast chiller v1 state (bit array) — default_off=True
+        # so HA renders it as a toggle (off) rather than action buttons (unknown)
+        default_off=True,
         device_types=(DEVICE_TYPE_BLAST_CHILLER,),
     ),
 )
@@ -200,7 +188,9 @@ class SmegSwitchEntity(SmegEntity, SwitchEntity):
             return self._optimistic_on
         value = self._state.get(self.entity_description.state_field)
         if value is None:
-            return None
+            # default_off=True: return False so HA renders a toggle (not action buttons)
+            # Used for blast chiller switches whose state is in bit arrays, not named fields
+            return False if self.entity_description.default_off else None
         return str(value).upper() in ("ON", "1", "TRUE")
 
     async def async_turn_on(self, **kwargs) -> None:
