@@ -91,8 +91,21 @@ class SmegWebSocket:
 
         _LOGGER.debug("Connecting raw STOMP WebSocket: %s", WS_URL)
 
+        # Android app sends Authorization in both the WebSocket HTTP upgrade (via
+        # OkHttp interceptor) and the STOMP SUBSCRIBE frame. Spring Security re-checks
+        # auth on each inbound STOMP frame via clientInboundChannel, so the token must
+        # be present in the SUBSCRIBE headers or the server rejects it with an ERROR.
+        auth_headers = {
+            "Authorization": f"Bearer {token}",
+            "x-tenant": "smegcons",
+        }
+
         async with asyncio.timeout(_CONNECT_TIMEOUT):
-            self._ws = await self._session.ws_connect(WS_URL, heartbeat=None)
+            self._ws = await self._session.ws_connect(
+                WS_URL,
+                heartbeat=None,
+                headers=auth_headers,
+            )
 
             # Send STOMP CONNECT
             connect = _stomp_frame(
@@ -100,8 +113,7 @@ class SmegWebSocket:
                 {
                     "accept-version": "1.1,1.0",
                     "heart-beat": "0,0",
-                    "Authorization": f"Bearer {token}",
-                    "x-tenant": "smegcons",
+                    **auth_headers,
                 },
             )
             await self._ws.send_str(connect)
@@ -119,13 +131,15 @@ class SmegWebSocket:
                     f"Expected CONNECTED, got {connected['command']!r}"
                 )
 
-            # Send STOMP SUBSCRIBE
+            # Send STOMP SUBSCRIBE — auth headers required here too (Spring Security
+            # checks clientInboundChannel per-frame, matching the Android app behaviour).
             sub = _stomp_frame(
                 "SUBSCRIBE",
                 {
                     "destination": f"/status/change/{self._auth.iot_user_code}",
                     "id": "sub-0",
                     "ack": "auto",
+                    **auth_headers,
                 },
             )
             await self._ws.send_str(sub)

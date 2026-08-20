@@ -157,6 +157,7 @@ class SmegCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
     async def _on_ws_disconnect(self, _payload: None) -> None:
         """Called by SmegWebSocket when the connection drops or gets a STOMP ERROR."""
         self._ws_connected = False
+        self.update_interval = _POLL_INTERVAL_POLL   # poll faster while STOMP is down
         self._stomp_failures += 1
         self._check_stomp_failure_limit()
 
@@ -174,6 +175,8 @@ class SmegCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         """Called by SmegWebSocket on each inbound state push."""
         # Receiving a real message means STOMP is healthy — reset failure counter
         self._stomp_failures = 0
+
+        _LOGGER.debug("STOMP MESSAGE payload keys=%s", list(payload.keys()))
 
         device_code = payload.get("deviceCode")
         status = payload.get("status")
@@ -208,6 +211,13 @@ class SmegCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
                     await self._start_websocket()
                     if self._ws_connected:
                         await self._fetch_all_devices()
+                        # Re-check: a STOMP ERROR frame can arrive during the fetch
+                        # (listen task runs while we await HTTP). If it did, _ws_connected
+                        # is now False — loop back and try again rather than falsely
+                        # declaring success.
+                        if not self._ws_connected:
+                            delay = min(delay * 2, _RECONNECT_MAX)
+                            continue
                         self.async_set_updated_data(self.data)
                         _LOGGER.info("Smeg WebSocket reconnected successfully")
                         return
@@ -250,10 +260,9 @@ class SmegCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
 
         child = state.get("childlockRemCmd")
         if child is not None:
-            # childlockRemCmd=1 means locked. Synthesise childlock="OFF" when locked so
-            # that "OFF"=locked is consistent with the oven's direct childlock field, and
-            # the shared binary_sensor/switch descriptors work correctly for both device types.
-            state["childlock"] = "OFF" if child == 1 else "ON"
+            # childlockRemCmd=1 means locked. Synthesise childlock="ON" when locked,
+            # consistent with the oven's direct childlock field ("ON" = lock engaged).
+            state["childlock"] = "ON" if child == 1 else "OFF"
 
         # Synthesise alarm summary fields from individual alarmStatus_NNN bits.
         # isAlarmActive in BlastChillerStatusKt.java requires BOTH bit N and bit N+1

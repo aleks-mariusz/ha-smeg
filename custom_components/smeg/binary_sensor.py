@@ -85,11 +85,13 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[SmegBinarySensorDescription, ...] = (
         key="child_lock",
         name="Child Lock Active",
         state_field="childlock",
-        on_values=("ON", "on", "true", "1"),
+        # HA LOCK device class: is_on=True → "Unlocked", is_on=False → "Locked".
+        # Firmware sends "ON" when the lock IS engaged. So "OFF" (disengaged/unlocked)
+        # must be the on_value to produce is_on=True ("Unlocked") for that state.
+        on_values=("OFF", "off"),
         device_class=BinarySensorDeviceClass.LOCK,
         # Oven: field is "childlock" string "ON"/"OFF" from firmware.
-        # Blast chiller: coordinator translates applState2_001 → childlockRemCmd → childlock "ON"/"OFF".
-        # Source: BlastChillerStatusTransformer.java (SmegConnect Plus APK, ADF 0526).
+        # Blast chiller: coordinator synthesises childlock="ON" when locked (childlockRemCmd=1).
         device_types=(DEVICE_TYPE_OVEN, DEVICE_TYPE_BLAST_CHILLER),
     ),
     # True when the appliance is reporting an active error (failureCode != 0).

@@ -93,18 +93,16 @@ SWITCH_DESCRIPTIONS: tuple[SmegSwitchDescription, ...] = (
         entity_category=EntityCategory.CONFIG,
         device_types=(DEVICE_TYPE_OVEN,),
     ),
-    # Oven child lock: firmware uses childlock="OFF" to mean "lock engaged".
-    # param_value_on="OFF" → turn switch On (lock engaged) → send childlock=OFF to oven.
-    # invert_state=True → show switch On when childlock="OFF" in state (lock engaged).
+    # Oven child lock: firmware uses childlock="ON" to mean "lock engaged".
+    # param_value_on="ON" → turn switch On (lock engaged) → send childlock=ON to oven.
     SmegSwitchDescription(
         key="childlock",
         name="Child Lock",
         state_field="childlock",
         command_on=CMD_CHILDLOCK,
         param_key="childlock",
-        param_value_on="OFF",
-        param_value_off="ON",
-        invert_state=True,
+        param_value_on="ON",
+        param_value_off="OFF",
         requires_remote_control=False,
         device_types=(DEVICE_TYPE_OVEN,),
     ),
@@ -134,8 +132,7 @@ SWITCH_DESCRIPTIONS: tuple[SmegSwitchDescription, ...] = (
         device_types=(DEVICE_TYPE_BLAST_CHILLER,),
     ),
     # Blast chiller child lock: childlockRemCmd=1 locks, 0 unlocks.
-    # Coordinator now synthesises childlock="OFF" when locked (consistent with oven).
-    # invert_state=True → show switch On when childlock="OFF" in state (lock engaged).
+    # Coordinator synthesises childlock="ON" when locked (consistent with oven direct field).
     SmegSwitchDescription(
         key="chiller_childlock",
         name="Child Lock",
@@ -144,7 +141,6 @@ SWITCH_DESCRIPTIONS: tuple[SmegSwitchDescription, ...] = (
         param_key="childlockRemCmd",
         param_value_on="1",
         param_value_off="0",
-        invert_state=True,
         requires_remote_control=False,
         device_types=(DEVICE_TYPE_BLAST_CHILLER,),
     ),
@@ -233,6 +229,9 @@ class SmegSwitchEntity(SmegEntity, SwitchEntity):
                 desc.command_on,
                 [{"parameterKey": desc.param_key, "parameterValue": value}],
             )
+            # Trigger an immediate poll so binary sensors and other entities reflect the
+            # new state without waiting for the next scheduled interval.
+            await self.coordinator.async_request_refresh()
         except Exception:
             _LOGGER.error(
                 "Failed to send %s=%s to %s", desc.command_on, value, self._device_code,

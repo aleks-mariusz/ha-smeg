@@ -86,11 +86,13 @@ class SmegOvenClimate(SmegEntity, ClimateEntity):
     def __init__(self, coordinator: SmegCoordinator, device_code: str) -> None:
         super().__init__(coordinator, device_code)
         self._attr_unique_id = f"{device_code}_climate"
+        self._optimistic_hvac_mode: HVACMode | None = None
+        self._optimistic_target_temp: float | None = None
 
     @property
     def hvac_mode(self) -> HVACMode:
-        if self._attr_hvac_mode is not None:
-            return self._attr_hvac_mode
+        if self._optimistic_hvac_mode is not None:
+            return self._optimistic_hvac_mode
         appl = self._state.get("appl", "OFF")
         return HVACMode.HEAT if str(appl).upper() == "ON" else HVACMode.OFF
 
@@ -111,8 +113,8 @@ class SmegOvenClimate(SmegEntity, ClimateEntity):
 
     @property
     def target_temperature(self) -> float | None:
-        if self._attr_target_temperature is not None:
-            return self._attr_target_temperature
+        if self._optimistic_target_temp is not None:
+            return self._optimistic_target_temp
         val = self._state.get("currStepTargetTempSet")
         try:
             t = float(val)
@@ -136,7 +138,7 @@ class SmegOvenClimate(SmegEntity, ClimateEntity):
             CMD_APPL,
             [{"parameterKey": "appl", "parameterValue": appl_value}],
         )
-        self._attr_hvac_mode = hvac_mode
+        self._optimistic_hvac_mode = hvac_mode
         self.async_write_ha_state()
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
@@ -148,13 +150,13 @@ class SmegOvenClimate(SmegEntity, ClimateEntity):
             CMD_SET_TEMP,
             [{"parameterKey": "currStepTargetTempSet", "parameterValue": int(temp)}],
         )
-        self._attr_target_temperature = float(temp)
+        self._optimistic_target_temp = float(temp)
         self.async_write_ha_state()
 
     def _handle_coordinator_update(self) -> None:
         """Clear optimistic overrides when coordinator delivers real data."""
-        self._attr_hvac_mode = None
-        self._attr_target_temperature = None
+        self._optimistic_hvac_mode = None
+        self._optimistic_target_temp = None
         super()._handle_coordinator_update()
 
     async def _send_command(self, code: str, params: list) -> None:
@@ -169,6 +171,6 @@ class SmegOvenClimate(SmegEntity, ClimateEntity):
             _LOGGER.error(
                 "Failed to send command %s to %s", code, self._device_code, exc_info=True
             )
-            self._attr_hvac_mode = None
-            self._attr_target_temperature = None
+            self._optimistic_hvac_mode = None
+            self._optimistic_target_temp = None
             self.async_write_ha_state()
