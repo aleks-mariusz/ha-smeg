@@ -37,8 +37,7 @@ from .websocket import SmegWebSocket
 
 _LOGGER = logging.getLogger(__name__)
 
-_POLL_INTERVAL_WS   = timedelta(seconds=30)   # when WebSocket is healthy
-_POLL_INTERVAL_POLL = timedelta(seconds=10)   # when falling back to polling
+_POLL_INTERVAL_POLL = timedelta(seconds=10)   # when falling back to polling (STOMP down)
 
 # Seconds before the first reconnect attempt; doubles each time (30 → 60 → 120 → 240 …)
 _RECONNECT_INITIAL   = 30
@@ -60,7 +59,7 @@ class SmegCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
             hass,
             _LOGGER,
             name="smeg",
-            update_interval=_POLL_INTERVAL_WS,
+            update_interval=_POLL_INTERVAL_POLL,  # overridden to None once STOMP connects
         )
         self.auth = auth
         self.api = api
@@ -133,7 +132,7 @@ class SmegCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         try:
             await self._ws.async_connect()
             self._ws_connected = True
-            self.update_interval = _POLL_INTERVAL_WS
+            self.update_interval = None  # STOMP is the source of truth; disable polling
         except Exception:
             _LOGGER.warning("Failed to connect WebSocket — using polling", exc_info=True)
             self._ws_connected = False
