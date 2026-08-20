@@ -120,16 +120,15 @@ SWITCH_DESCRIPTIONS: tuple[SmegSwitchDescription, ...] = (
         entity_category=EntityCategory.CONFIG,
         device_types=(DEVICE_TYPE_OVEN,),
     ),
-    # Blast chiller uses RemCmd variants (confirmed naming pattern)
     SmegSwitchDescription(
         key="chiller_sound",
         name="Sound",
-        # coordinator translates applState2_007 → soundActivRemCmd (v0.1.6+)
         state_field="soundActivRemCmd",
         command_on=CMD_CHILLER_SOUND,
         param_key="soundActivRemCmd",
         param_value_on="1",
         param_value_off="0",
+        default_off=True,
         requires_remote_control=False,
         entity_category=EntityCategory.CONFIG,
         device_types=(DEVICE_TYPE_BLAST_CHILLER,),

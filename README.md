@@ -20,33 +20,20 @@ The appliance connects outbound to the Smeg cloud; there is no supported local c
 
 ## SmegConnect vs SmegConnect Plus
 
-Smeg publishes two separate apps that share the same cloud infrastructure (same AWS backend, same account, same credentials) but target different appliance categories:
+Smeg publishes two companion apps — **SmegConnect** (ovens, dishwashers, wine coolers) and **SmegConnect Plus** (blast chillers, with dishwashers in transition). Despite the separate apps, they share the same cloud backend, the same account, and the same credentials. You only need one account regardless of which appliances you own, and both apps work with that account simultaneously.
 
-| | SmegConnect | SmegConnect Plus |
-|---|---|---|
-| **Supported devices** | Ovens, dishwashers, wine coolers | Blast chillers (+ dishwashers being migrated) |
-| **API version used** | v1 (`/api/v1/…`) | v2 (`/api/v2/…`) for device listing and auth |
-| **Auth endpoint** | `POST /api/v1/auth/token` | `POST /api/v2/auth/login` |
-| **Device listing** | `GET /api/v1/devices` | `POST /api/v2/devices` (with parameter list) |
-| **Command endpoint** | `POST /api/v1/devices/{code}/commands` | Same — v2 commands use the identical format |
-| **State fields** | Named fields (`doorState`, `childlock`, `appl`) | Bit arrays (`applState1/2_*`) for blast chiller — decoded by integration using `BlastChillerStatusTransformer` from Plus APK |
+The apps differ in their API version: SmegConnect uses v1 endpoints while SmegConnect Plus uses v2. The main practical difference is how device state is encoded — ovens expose readable named fields (`doorState`, `childlock`, `appl`), whereas blast chillers use compact bit arrays (`applState1_*`, `applState2_*`) that require decoding. This integration handles that decoding automatically using the bit map extracted from the SmegConnect Plus APK.
 
-**Both apps use the same Smeg cloud.** A device enrolled via either app can be commanded via either API version. You do not need two accounts.
+**This integration uses v1 endpoints for everything.** The v1 device listing returns all enrolled appliances regardless of which app provisioned them, and v1 commands work for both ovens and blast chillers. You do not need to provision devices via any particular app — whichever app you used to set up your appliance, this integration will find and control it.
 
-**This integration uses v1 endpoints uniformly** for all device types. The v1 `GET /api/v1/devices` listing returns every enrolled appliance regardless of which app was used to provision it. Commands sent via v1 are confirmed working for both ovens (SmegConnect) and blast chillers (SmegConnect Plus).
-
-**v2 device listing is scoped by app category.** `POST /api/v2/devices` only returns devices enrolled via SmegConnect Plus — ovens enrolled via SmegConnect do not appear. For this reason, the integration uses v1 as the authoritative device list source.
-
-> **Blast chiller bit arrays:** The blast chiller firmware encodes several boolean states as positional bits in generic `applState2_*` fields. The integration decodes these using the bit map extracted from `BlastChillerStatusTransformer.java` in the SmegConnect Plus APK — child lock and appliance on/off state are fully supported. Door state (`doorState`) is **not available** for the SBC4604WNR1: no door bit exists in the firmware's state register (confirmed from Plus APK source).
+For the full API and protocol details — endpoints, command codes, state fields, bit decoding — see [PROTOCOL.md](PROTOCOL.md).
 
 ---
 
 ## Prerequisites
 
 1. **A SmegConnect account** — create one in the SmegConnect or SmegConnect Plus app.
-2. **Enrolled appliances** — each appliance must be provisioned into your account via the app.
-
-> **TODO:** Automated account creation and appliance enrollment scripts are planned — see `smeg-run.sh` in the companion tools directory for the provisioning flow.
+2. **Enrolled appliances** — each appliance must be provisioned into your account via the official app before the integration can discover it.
 
 ---
 
@@ -118,16 +105,20 @@ Devices are named using the full commercial product code, e.g.:
 | `sensor` | Step 1/2/3 Target Temperature | Chilling program step targets |
 | `sensor` | Meat Probe Temperature | When probe connected |
 | `binary_sensor` | Meat Probe Connected | Probe insertion status |
-| `binary_sensor` | Child Lock Active | Child lock state (decoded from `applState2_001`) |
+| `binary_sensor` | Door | Open/Closed — decoded from `applState1_002` |
+| `binary_sensor` | Child Lock Active | Lock state — decoded from `applState2_001` |
 | `binary_sensor` | Cloud Connected | Cloud connectivity status |
 | `binary_sensor` | Remote Control Enabled | Whether remote commands are accepted |
+| `binary_sensor` | Error Active | True when an alarm condition is present |
+| `sensor` | Active Alarms | Human-readable list of active alarm conditions |
 | `number` | Step 1/2/3 Target Temperature | Set chilling step temperatures |
 | `number` | Timer 1/2 | Countdown timers |
 | `number` | Display Brightness | Screen brightness |
 | `select` | Temperature Format, Clock Format, Weight Format, Clock Font | Display settings |
-| `switch` | Sound, Child Lock | Settings |
+| `switch` | Sound | Audible alerts |
+| `switch` | Child Lock | Panel lockout |
 
-> **Note:** Door state is not available for the blast chiller. The SBC4604WNR1 firmware does not expose door open/closed state remotely — confirmed by decompiling `BlastChillerStatusTransformer.java` from the SmegConnect Plus APK: no door bit exists in the firmware's `applState2_*` register.
+> **Note:** Door state for the blast chiller comes from `applState1_002` (not `applState2_*`), decoded from the SmegConnect Plus APK source (`BlastChillerStatusKt.java`). Confirmed present in live v1 API responses.
 
 ---
 
@@ -169,7 +160,7 @@ Many operational commands (oven power, light, cooking temperature) require **Rem
 
 **Opening the door disables Remote Control.** When you open the oven or blast chiller door, the `remoteControl` field is set to OFF by the firmware as a safety measure. You must close the door and re-enable Remote Control on the display before sending operational commands again.
 
-**Child lock blocks Remote Control.** When Child Lock is physically active on the appliance display, the firmware rejects all remote operational commands (the API returns 202 Accepted, but the appliance silently ignores the command). To restore remote control: disable child lock on the physical display first.
+**Child lock blocks Remote Control.** When Child Lock is active, the firmware silently ignores remote operational commands (the API returns 202 Accepted but the appliance does nothing). To restore remote control, disable Child Lock — either via the HA switch entity or on the physical display. Note: if the lock was engaged physically on the display, you may need to disengage it there first before remote commands are accepted.
 
 ---
 
@@ -194,11 +185,20 @@ All 80 SmegConnect/SmegConnect Plus supported models are in the integration's ca
 
 ## Limitations & Known Issues
 
-- **Local control not available** — the CB firmware shuts down its local HTTPS API (port 13335) after provisioning. All control is via the Smeg cloud.
-- **Blast chiller door state** — the SBC4604WNR1 firmware does not expose door open/closed state. Child lock and appliance on/off are decoded and available as sensors (v0.1.6+). Door state is a confirmed firmware limitation.
+- **Cloud-only** — the CB firmware shuts down its local HTTPS API after provisioning. All runtime control is via the Smeg cloud; no local control path exists.
 - **Oven 2 (4G AUX variant)** — devices with a CB v0.0.0 or 4G auxiliary module may not provision via the standard flow. Contact Smeg support.
 - **PARSW number** (e.g. PARSW0436) — this is static ADF metadata not returned by the live API; only the PARSW version number is available.
-- **Firmware upgrade status** — no sensor for pending OTA updates yet; planned for a future release.
+- **Firmware upgrade status** — no sensor for pending OTA updates; planned for a future release.
+
+---
+
+## Planned / In Progress
+
+- **Blast chiller program select** — 10 named chilling programs (Blast Chilling, Freezing, Drinks Cooling, etc.) with confirmed program IDs; implementation in progress
+- **Dishwasher support** — entity definitions and field mappings from APK analysis are complete; needs testing with a real device
+- **Wine cooler support** — single and dual-zone models planned; needs testing with a real device
+- **HACS default store submission** — planned once the integration reaches broader stability
+- **Second oven variant (4G AUX module)** — pending resolution of a CB firmware initialisation issue with Smeg support
 
 ---
 

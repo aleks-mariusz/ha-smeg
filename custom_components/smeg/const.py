@@ -286,6 +286,7 @@ CMD_CHILLER_DIGITAL_CLOCK = "digClockRemCmdFeature"   # confirmed param: digCloc
 # doorState is NOT in this map — the SBC4604WNR1 firmware does not expose door state.
 BLAST_CHILLER_BIT_MAP: dict[str, str] = {
     "applState1_000": "applRemCmd",       # 1 = appliance on, 0 = off
+    "applState1_002": "doorRemCmd",       # 1 = door open, 0 = door closed
     "applState2_001": "childlockRemCmd",  # 1 = locked, 0 = unlocked
     "applState2_003": "showroomRemCmd",   # 1 = showroom on, 0 = off
     "applState2_007": "soundActivRemCmd", # 1 = sound on, 0 = off
@@ -293,10 +294,12 @@ BLAST_CHILLER_BIT_MAP: dict[str, str] = {
 }
 
 # Blast chiller alarm bit map.
-# Source: extractBlastChillerAlarms() in BlastChillerStatusKt.java (SmegConnect Plus APK).
+# Source: extractBlastChillerAlarms() / isAlarmActive() in BlastChillerStatusKt.java.
 # Each entry is (alarm_register_prefix, bit_index, human_readable_label).
-# The coordinator reads alarmStatus_NNN / alarmStatus2_NNN fields and synthesises
-# chiller_alarm_active (bool) and chiller_alarm_description (str) from these.
+# An alarm is active when BOTH alarmStatus_{bit} AND alarmStatus_{bit+1} equal 1
+# (mirrors the two-field AND check in isAlarmActive). Checking only one field
+# produces false positives because the firmware sets individual bits to 1 in
+# normal operation.
 BLAST_CHILLER_ALARM_MAP: list[tuple[str, int, str]] = [
     ("alarmStatus",  0,  "Probe fault"),
     ("alarmStatus",  4,  "Compressor fault"),

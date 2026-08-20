@@ -244,6 +244,10 @@ class SmegCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         if appl_on is not None:
             state["appl"] = "ON" if appl_on == 1 else "OFF"
 
+        door = state.get("doorRemCmd")
+        if door is not None:
+            state["doorState"] = "OPEN" if door == 1 else "CLOSE"
+
         child = state.get("childlockRemCmd")
         if child is not None:
             # childlockRemCmd=1 means locked. Synthesise childlock="OFF" when locked so
@@ -252,10 +256,15 @@ class SmegCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
             state["childlock"] = "OFF" if child == 1 else "ON"
 
         # Synthesise alarm summary fields from individual alarmStatus_NNN bits.
+        # isAlarmActive in BlastChillerStatusKt.java requires BOTH bit N and bit N+1
+        # to equal 1 for the alarm to be considered active. Checking only one field
+        # produced false positives because the firmware sets individual bits to 1
+        # during normal operation.
         active_alarms = [
             label
             for prefix, bit, label in BLAST_CHILLER_ALARM_MAP
-            if state.get(f"{prefix}_{bit:03d}", 0) == 1
+            if (state.get(f"{prefix}_{bit:03d}", 0) == 1
+                and state.get(f"{prefix}_{bit + 1:03d}", 0) == 1)
         ]
         state["chiller_alarm_active"] = len(active_alarms) > 0
         state["chiller_alarm_description"] = (

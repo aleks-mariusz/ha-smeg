@@ -36,10 +36,10 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[SmegBinarySensorDescription, ...] = (
         state_field="doorState",
         on_values=("OPEN", "open"),
         device_class=BinarySensorDeviceClass.DOOR,
-        # Blast chiller: doorState is NOT available. Confirmed by decompiling
-        # BlastChillerStatusTransformer.java and ADF 0526 — no door bit exists in
-        # the applState2_* register for the SBC4604WNR1 firmware.
-        device_types=(DEVICE_TYPE_OVEN,),
+        # Blast chiller: doorState synthesised from applState1_002 by coordinator.
+        # Source: BlastChillerStatusKt.java maps applState1_002 → doorState (1=open).
+        # Confirmed present in live v1 API response (applState1_002=0 when door closed).
+        device_types=(DEVICE_TYPE_OVEN, DEVICE_TYPE_BLAST_CHILLER),
     ),
     SmegBinarySensorDescription(
         key="cloud_connected",
