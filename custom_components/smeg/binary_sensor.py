@@ -36,9 +36,9 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[SmegBinarySensorDescription, ...] = (
         state_field="doorState",
         on_values=("OPEN", "open"),
         device_class=BinarySensorDeviceClass.DOOR,
-        # Blast chiller does NOT have a named doorState field in v1 state —
-        # its door state is encoded in applState2_* bit arrays.
-        # TODO v2 migration: decode bit arrays once ADF mapping is available.
+        # Blast chiller: doorState is NOT available. Confirmed by decompiling
+        # BlastChillerStatusTransformer.java and ADF 0526 — no door bit exists in
+        # the applState2_* register for the SBC4604WNR1 firmware.
         device_types=(DEVICE_TYPE_OVEN,),
     ),
     SmegBinarySensorDescription(
@@ -87,11 +87,10 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[SmegBinarySensorDescription, ...] = (
         state_field="childlock",
         on_values=("ON", "on", "true", "1"),
         device_class=BinarySensorDeviceClass.LOCK,
-        # Blast chiller: no named childlock field in v1 state (encoded in bit arrays).
-        # Oven: if child lock is physically active on the oven display, the oven firmware
-        # will ALSO block remote commands — the childlockFeature command may be accepted
-        # (202) but silently ignored until child lock is disabled on the physical display.
-        device_types=(DEVICE_TYPE_OVEN,),
+        # Oven: field is "childlock" string "ON"/"OFF" from firmware.
+        # Blast chiller: coordinator translates applState2_001 → childlockRemCmd → childlock "ON"/"OFF".
+        # Source: BlastChillerStatusTransformer.java (SmegConnect Plus APK, ADF 0526).
+        device_types=(DEVICE_TYPE_OVEN, DEVICE_TYPE_BLAST_CHILLER),
     ),
     # True when the appliance is reporting an active error (failureCode != 0).
     # Oven only — blast chiller uses separate alarmStatus_* fields.

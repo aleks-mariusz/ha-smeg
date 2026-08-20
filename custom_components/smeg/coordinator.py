@@ -32,7 +32,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .api import SmegApi, SmegApiError
 from .auth import SmegAuth
-
+from .const import BLAST_CHILLER_BIT_MAP, DEVICE_TYPE_BLAST_CHILLER
 from .websocket import SmegWebSocket
 
 _LOGGER = logging.getLogger(__name__)
@@ -105,9 +105,10 @@ class SmegCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         for code in list(self.data):
             try:
                 info = await self.api.get_device_info(code)
-                self.data[code]["state"] = (
-                    info.get("highLevelDeviceStatus", {}).get("status", {})
-                )
+                state = info.get("highLevelDeviceStatus", {}).get("status", {})
+                if self.data[code].get("deviceTypeId") == DEVICE_TYPE_BLAST_CHILLER:
+                    state = self._apply_blast_chiller_bit_map(state)
+                self.data[code]["state"] = state
             except SmegApiError as err:
                 raise UpdateFailed(f"Failed to poll {code}: {err}") from err
         return self.data
@@ -182,6 +183,8 @@ class SmegCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
             _LOGGER.debug("State push for unknown device %s — ignoring", device_code)
             return
 
+        if self.data[device_code].get("deviceTypeId") == DEVICE_TYPE_BLAST_CHILLER:
+            status = self._apply_blast_chiller_bit_map(status)
         self.data[device_code]["state"] = status
         self.async_set_updated_data(self.data)
 
@@ -224,6 +227,29 @@ class SmegCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
     # Helpers
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _apply_blast_chiller_bit_map(state: dict[str, Any]) -> dict[str, Any]:
+        """Translate raw applState2_* bits to logical named fields for blast chillers.
+
+        Mirrors BlastChillerStatusTransformer.java in the SmegConnect Plus APK.
+        Also synthesises oven-compatible aliases (e.g. 'childlock') so the same
+        binary_sensor/switch descriptors work for both device types.
+        """
+        for raw_field, named_field in BLAST_CHILLER_BIT_MAP.items():
+            if raw_field in state:
+                state[named_field] = state[raw_field]
+
+        # Synthesise oven-compatible string aliases used by existing sensor descriptors.
+        appl_on = state.get("applRemCmd")
+        if appl_on is not None:
+            state["appl"] = "ON" if appl_on == 1 else "OFF"
+
+        child = state.get("childlockRemCmd")
+        if child is not None:
+            state["childlock"] = "ON" if child == 1 else "OFF"
+
+        return state
+
     async def _fetch_all_devices(self) -> None:
         devices_raw = await self.api.get_devices()
         for dev in devices_raw:
@@ -235,10 +261,12 @@ class SmegCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
                 info = {}
 
             existing_state = self.data.get(code, {}).get("state", {})
+            state = info.get("highLevelDeviceStatus", {}).get("status", existing_state)
+            type_id = dev.get("deviceTypeId", 0)
+            if type_id == DEVICE_TYPE_BLAST_CHILLER:
+                state = self._apply_blast_chiller_bit_map(state)
             self.data[code] = {
                 **dev,
-                "state": info.get("highLevelDeviceStatus", {}).get(
-                    "status", existing_state
-                ),
+                "state": state,
                 "availableCommands": info.get("availableCommands", []),
             }

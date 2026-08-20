@@ -278,6 +278,20 @@ CMD_CHILLER_CHILDLOCK = "childlockRemCmdFeature"
 CMD_CHILLER_SOUND = "soundActivRemCmdFeature"
 CMD_CHILLER_DIGITAL_CLOCK = "digClockRemCmdFeature"   # confirmed param: digClockRemCmd
 
+# Blast chiller bit-field → named field mapping.
+# Source: BlastChillerStatusTransformer.java in SmegConnect Plus APK (ADF 0526), confirmed
+# 2026-08-20 by direct decompilation of smegconnectplus/base.apk res/raw/adf_0526_json.json
+# and BlastChillerStatusTransformer.java.
+# The transformer renames raw API bit fields to logical named fields on the client side.
+# doorState is NOT in this map — the SBC4604WNR1 firmware does not expose door state.
+BLAST_CHILLER_BIT_MAP: dict[str, str] = {
+    "applState1_000": "applRemCmd",       # 1 = appliance on, 0 = off
+    "applState2_001": "childlockRemCmd",  # 1 = locked, 0 = unlocked
+    "applState2_003": "showroomRemCmd",   # 1 = showroom on, 0 = off
+    "applState2_007": "soundActivRemCmd", # 1 = sound on, 0 = off
+    "applState2_013": "digClockRemCmd",   # 1 = digital clock on, 0 = off
+}
+
 # Error strings from Smeg S3 labels CDN (smeg-connect-config-app-prod.s3.eu-central-1.amazonaws.com)
 # Maps failureCode integer → human-readable description for oven errors.
 # Codes 1-9 = Err1-Err9, 10 = Err10, 0xA-0xF = ErrA-ErrF (1-indexed hex digits).
