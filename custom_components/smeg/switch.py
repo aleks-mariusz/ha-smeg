@@ -41,6 +41,10 @@ class SmegSwitchDescription(SwitchEntityDescription):
     # When True: return False (not None) when state field is absent from device state,
     # producing a toggle UI instead of action-button UI for write-only switches.
     default_off: bool = False
+    # When True: invert the state field so that "OFF" in the firmware means the switch
+    # is logically On. Used for child lock where the oven/chiller firmware encodes
+    # "lock engaged" as childlock="OFF" (i.e. childlock feature is deactivated/cleared).
+    invert_state: bool = False
     device_types: tuple[int, ...] = ()
 
 
@@ -89,14 +93,18 @@ SWITCH_DESCRIPTIONS: tuple[SmegSwitchDescription, ...] = (
         entity_category=EntityCategory.CONFIG,
         device_types=(DEVICE_TYPE_OVEN,),
     ),
+    # Oven child lock: firmware uses childlock="OFF" to mean "lock engaged".
+    # param_value_on="OFF" → turn switch On (lock engaged) → send childlock=OFF to oven.
+    # invert_state=True → show switch On when childlock="OFF" in state (lock engaged).
     SmegSwitchDescription(
         key="childlock",
         name="Child Lock",
         state_field="childlock",
         command_on=CMD_CHILDLOCK,
         param_key="childlock",
-        param_value_on="ON",
-        param_value_off="OFF",
+        param_value_on="OFF",
+        param_value_off="ON",
+        invert_state=True,
         requires_remote_control=False,
         device_types=(DEVICE_TYPE_OVEN,),
     ),
@@ -126,15 +134,18 @@ SWITCH_DESCRIPTIONS: tuple[SmegSwitchDescription, ...] = (
         entity_category=EntityCategory.CONFIG,
         device_types=(DEVICE_TYPE_BLAST_CHILLER,),
     ),
+    # Blast chiller child lock: childlockRemCmd=1 locks, 0 unlocks.
+    # Coordinator now synthesises childlock="OFF" when locked (consistent with oven).
+    # invert_state=True → show switch On when childlock="OFF" in state (lock engaged).
     SmegSwitchDescription(
         key="chiller_childlock",
         name="Child Lock",
-        # coordinator translates applState2_001 → childlockRemCmd → childlock (v0.1.6+)
         state_field="childlock",
         command_on=CMD_CHILLER_CHILDLOCK,
         param_key="childlockRemCmd",
         param_value_on="1",
         param_value_off="0",
+        invert_state=True,
         requires_remote_control=False,
         device_types=(DEVICE_TYPE_BLAST_CHILLER,),
     ),
@@ -189,7 +200,8 @@ class SmegSwitchEntity(SmegEntity, SwitchEntity):
             # default_off=True: return False so HA renders a toggle (not action buttons)
             # Used for blast chiller switches whose state is in bit arrays, not named fields
             return False if self.entity_description.default_off else None
-        return str(value).upper() in ("ON", "1", "TRUE")
+        raw = str(value).upper() in ("ON", "1", "TRUE")
+        return (not raw) if self.entity_description.invert_state else raw
 
     async def async_turn_on(self, **kwargs) -> None:
         self._check_remote_control()

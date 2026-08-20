@@ -246,7 +246,10 @@ class SmegCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
 
         child = state.get("childlockRemCmd")
         if child is not None:
-            state["childlock"] = "ON" if child == 1 else "OFF"
+            # childlockRemCmd=1 means locked. Synthesise childlock="OFF" when locked so
+            # that "OFF"=locked is consistent with the oven's direct childlock field, and
+            # the shared binary_sensor/switch descriptors work correctly for both device types.
+            state["childlock"] = "OFF" if child == 1 else "ON"
 
         # Synthesise alarm summary fields from individual alarmStatus_NNN bits.
         active_alarms = [
